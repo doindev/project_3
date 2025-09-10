@@ -7,20 +7,116 @@ public class DataStreamParser {
     private final Buffer buffer;
     private final InputStream inputStream;
     private boolean running;
+    private final TelnetOptions telnetOptions;
     
     public DataStreamParser(Buffer buffer, InputStream inputStream) {
+        this(buffer, inputStream, null);
+    }
+    
+    public DataStreamParser(Buffer buffer, InputStream inputStream, TelnetOptions telnetOptions) {
         this.buffer = buffer;
         this.inputStream = inputStream;
+        this.telnetOptions = telnetOptions;
         this.running = false;
     }
     
     public void parse() throws IOException {
         running = true;
-        byte[] readBuffer = new byte[8192];
-        int bytesRead;
         
-        while (running && (bytesRead = inputStream.read(readBuffer)) != -1) {
-            processDataStream(readBuffer, bytesRead);
+        // Use single byte reads to handle telnet protocol properly
+        while (running) {
+            try {
+                int b = inputStream.read();
+                if (b == -1) {
+                    break; // End of stream
+                }
+                
+                processByte((byte) b);
+                
+            } catch (IOException e) {
+                if (running) {
+                    throw e; // Only throw if we're still supposed to be running
+                }
+                break;
+            }
+        }
+    }
+    
+    private byte[] dataBuffer = new byte[8192];
+    private int dataBufferPos = 0;
+    private boolean inTelnetCommand = false;
+    private byte[] telnetBuffer = new byte[256];
+    private int telnetBufferPos = 0;
+    
+    private void processByte(byte b) throws IOException {
+        if (b == TelnetConstants.IAC && !inTelnetCommand) {
+            // Start of telnet command
+            inTelnetCommand = true;
+            telnetBufferPos = 0;
+            telnetBuffer[telnetBufferPos++] = b;
+            
+            // Process any pending data first
+            if (dataBufferPos > 0) {
+                processDataStream(dataBuffer, dataBufferPos);
+                dataBufferPos = 0;
+            }
+            
+        } else if (inTelnetCommand) {
+            // Continue building telnet command
+            if (telnetBufferPos < telnetBuffer.length) {
+                telnetBuffer[telnetBufferPos++] = b;
+            }
+            
+            // Check if we have a complete telnet command
+            if (isCompleteTelnetCommand()) {
+                processTelnetCommand(telnetBuffer, 0, telnetBufferPos);
+                inTelnetCommand = false;
+                telnetBufferPos = 0;
+            }
+            
+        } else {
+            // Normal data byte
+            if (dataBufferPos < dataBuffer.length) {
+                dataBuffer[dataBufferPos++] = b;
+            } else {
+                // Buffer is full, process it
+                processDataStream(dataBuffer, dataBufferPos);
+                dataBufferPos = 0;
+                dataBuffer[dataBufferPos++] = b;
+            }
+        }
+    }
+    
+    private boolean isCompleteTelnetCommand() {
+        if (telnetBufferPos < 2) return false;
+        
+        byte command = telnetBuffer[1];
+        
+        switch (command) {
+            case TelnetConstants.DO:
+            case TelnetConstants.DONT:
+            case TelnetConstants.WILL:
+            case TelnetConstants.WONT:
+                return telnetBufferPos >= 3;
+                
+            case TelnetConstants.SB:
+                // Subnegotiation - look for IAC SE
+                if (telnetBufferPos >= 4) {
+                    for (int i = 2; i < telnetBufferPos - 1; i++) {
+                        if (telnetBuffer[i] == TelnetConstants.IAC && 
+                            telnetBuffer[i + 1] == TelnetConstants.SE) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+                
+            case TelnetConstants.SE:
+                // End of Record in 3270 context
+                return true;
+                
+            default:
+                return telnetBufferPos >= 2;
         }
     }
     
@@ -32,40 +128,43 @@ public class DataStreamParser {
         int i = 0;
         
         while (i < length) {
-            // Check for IAC (Interpret as Command)
-            if (data[i] == TelnetConstants.IAC && i + 1 < length) {
-                i = processTelnetCommand(data, i, length);
-                continue;
-            }
-            
-            // Process 3270 command
+            // Process 3270 command (no more IAC processing here since it's handled at byte level)
             i = processCommand(data, i, length);
         }
     }
     
-    private int processTelnetCommand(byte[] data, int index, int length) throws IOException {
-        if (index + 1 >= length) return index + 1;
+    private void processTelnetCommand(byte[] data, int index, int length) throws IOException {
+        if (length < 2) return;
         
-        byte command = data[index + 1];
+        byte command = data[1];
         
         switch (command) {
             case TelnetConstants.SE: // End of Record marker
                 buffer.notifyScreenUpdate();
-                return index + 2;
+                break;
                 
             case TelnetConstants.SB: // Subnegotiation
-                // Skip subnegotiation data until SE
-                int i = index + 2;
-                while (i < length - 1) {
-                    if (data[i] == TelnetConstants.IAC && data[i + 1] == TelnetConstants.SE) {
-                        return i + 2;
-                    }
-                    i++;
+                // Handle subnegotiation if telnetOptions is available
+                if (telnetOptions != null) {
+                    // Let TelnetOptions handle this
+                    // For now, just ignore during data parsing
                 }
-                return length;
+                break;
+                
+            case TelnetConstants.DO:
+            case TelnetConstants.DONT:
+            case TelnetConstants.WILL:
+            case TelnetConstants.WONT:
+                // Handle ongoing option negotiations if telnetOptions is available
+                if (telnetOptions != null && length >= 3) {
+                    // Let TelnetOptions handle this
+                    // For now, just ignore during data parsing
+                }
+                break;
                 
             default:
-                return index + 2;
+                // Unknown telnet command, ignore
+                break;
         }
     }
     

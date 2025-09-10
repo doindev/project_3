@@ -48,7 +48,7 @@ public class Tn3270 {
             telnetOptions.negotiateOptions();
             
             // Initialize and start data stream parser
-            parser = new DataStreamParser(buffer, socket.getInputStream());
+            parser = new DataStreamParser(buffer, socket.getInputStream(), telnetOptions);
             parserThread = new Thread(() -> {
                 try {
                     parser.parse();

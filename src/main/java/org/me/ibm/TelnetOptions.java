@@ -37,68 +37,114 @@ public class TelnetOptions {
         sendWill(TelnetConstants.SUPPRESS_GO_AHEAD);
         sendDo(TelnetConstants.SUPPRESS_GO_AHEAD);
         
-        // Process incoming option negotiations
-        processOptionNegotiations();
+        // Process incoming option negotiations - initial burst
+        processInitialNegotiations();
     }
     
-    private void processOptionNegotiations() throws IOException {
-        byte[] buffer = new byte[1024];
-        int timeoutCounter = 0;
+    private void processInitialNegotiations() throws IOException {
+        // Process telnet negotiations for a reasonable amount of time
+        // This allows for the back-and-forth negotiation process
+        long startTime = System.currentTimeMillis();
+        long timeout = 3000; // 3 seconds for initial negotiations
         
-        // Process initial option negotiations with timeout
-        while (timeoutCounter < 100) { // Adjust timeout as needed
-            if (inputStream.available() > 0) {
-                int bytesRead = inputStream.read(buffer);
-                processTelnetCommands(buffer, bytesRead);
-                timeoutCounter = 0; // Reset timeout on activity
-            } else {
-                try {
-                    Thread.sleep(10);
-                    timeoutCounter++;
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+        while (System.currentTimeMillis() - startTime < timeout) {
+            try {
+                // Read one byte at a time to handle streaming telnet data
+                int b = inputStream.read();
+                if (b == -1) {
+                    break; // End of stream
+                }
+                
+                processTelnetByte((byte) b);
+                
+            } catch (IOException e) {
+                // Socket timeout or other IO error
+                break;
+            }
+        }
+    }
+    
+    private byte[] negotiationBuffer = new byte[256];
+    private int bufferPos = 0;
+    
+    private void processTelnetByte(byte b) throws IOException {
+        negotiationBuffer[bufferPos++] = b;
+        
+        // Check if we have a complete telnet command
+        if (bufferPos >= 3 && negotiationBuffer[0] == TelnetConstants.IAC) {
+            byte command = negotiationBuffer[1];
+            
+            switch (command) {
+                case TelnetConstants.DO:
+                case TelnetConstants.DONT:
+                case TelnetConstants.WILL:
+                case TelnetConstants.WONT:
+                    if (bufferPos >= 3) {
+                        processTelnetCommand(negotiationBuffer[1], negotiationBuffer[2]);
+                        resetBuffer();
+                    }
                     break;
-                }
+                    
+                case TelnetConstants.SB:
+                    // Subnegotiation - need to find IAC SE
+                    if (bufferPos >= 2 && 
+                        negotiationBuffer[bufferPos - 2] == TelnetConstants.IAC && 
+                        negotiationBuffer[bufferPos - 1] == TelnetConstants.SE) {
+                        processSubnegotiation();
+                        resetBuffer();
+                    }
+                    break;
+                    
+                default:
+                    resetBuffer();
+                    break;
+            }
+        } else if (bufferPos >= negotiationBuffer.length) {
+            // Buffer overflow protection
+            resetBuffer();
+        } else if (bufferPos == 1 && b != TelnetConstants.IAC) {
+            // Not a telnet command, reset
+            resetBuffer();
+        }
+    }
+    
+    private void resetBuffer() {
+        bufferPos = 0;
+    }
+    
+    private void processTelnetCommand(byte command, byte option) throws IOException {
+        switch (command) {
+            case TelnetConstants.DO:
+                handleDo(option);
+                break;
+                
+            case TelnetConstants.DONT:
+                handleDont(option);
+                break;
+                
+            case TelnetConstants.WILL:
+                handleWill(option);
+                break;
+                
+            case TelnetConstants.WONT:
+                handleWont(option);
+                break;
+        }
+    }
+    
+    private void processSubnegotiation() throws IOException {
+        if (bufferPos < 5) return; // Too short for valid subnegotiation
+        
+        byte option = negotiationBuffer[2];
+        
+        if (option == TelnetConstants.TERMINAL_TYPE && bufferPos >= 5) {
+            byte subCommand = negotiationBuffer[3];
+            if (subCommand == 1) { // SEND command
+                sendTerminalType();
             }
         }
     }
     
-    private void processTelnetCommands(byte[] data, int length) throws IOException {
-        int i = 0;
-        
-        while (i < length) {
-            if (data[i] == TelnetConstants.IAC && i + 2 < length) {
-                byte command = data[i + 1];
-                byte option = data[i + 2];
-                
-                switch (command) {
-                    case TelnetConstants.DO:
-                        handleDo(option);
-                        break;
-                        
-                    case TelnetConstants.DONT:
-                        handleDont(option);
-                        break;
-                        
-                    case TelnetConstants.WILL:
-                        handleWill(option);
-                        break;
-                        
-                    case TelnetConstants.WONT:
-                        handleWont(option);
-                        break;
-                        
-                    case TelnetConstants.SB:
-                        i = handleSubnegotiation(data, i, length);
-                        continue;
-                }
-                
-                i += 3;
-            } else {
-                i++;
-            }
-        }
-    }
     
     private void handleDo(byte option) throws IOException {
         switch (option) {
@@ -165,29 +211,6 @@ public class TelnetOptions {
         sendDont(option);
     }
     
-    private int handleSubnegotiation(byte[] data, int index, int length) throws IOException {
-        if (index + 3 >= length) return index + 1;
-        
-        byte option = data[index + 2];
-        int i = index + 3;
-        
-        // Find end of subnegotiation
-        while (i < length - 1) {
-            if (data[i] == TelnetConstants.IAC && data[i + 1] == TelnetConstants.SE) {
-                break;
-            }
-            i++;
-        }
-        
-        if (option == TelnetConstants.TERMINAL_TYPE && i > index + 3) {
-            byte subCommand = data[index + 3];
-            if (subCommand == 1) { // SEND command
-                sendTerminalType();
-            }
-        }
-        
-        return i + 2; // Skip IAC SE
-    }
     
     private void sendTerminalType() throws IOException {
         outputStream.write(TelnetConstants.IAC);
