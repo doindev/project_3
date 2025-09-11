@@ -3,7 +3,7 @@ package org.me.ibm;
 import java.io.IOException;
 import java.net.Socket;
 
-public class Tn3270 {
+public class Tn3270 implements AutoCloseable {
     private Socket socket;
     private TelnetOptions telnetOptions;
     private Buffer buffer;
@@ -251,13 +251,9 @@ public class Tn3270 {
     }
     
     @Override
-    protected void finalize() throws Throwable {
-        try {
-            if (connected) {
-                disconnect();
-            }
-        } finally {
-            super.finalize();
+    public void close() throws IOException {
+        if (connected) {
+            disconnect();
         }
     }
 }

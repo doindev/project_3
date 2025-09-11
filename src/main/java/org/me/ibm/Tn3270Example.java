@@ -5,9 +5,8 @@ import java.io.IOException;
 public class Tn3270Example {
     
     public static void main(String[] args) {
-        Tn3270 terminal = new Tn3270();
-        
-        try {
+        // Using try-with-resources for automatic cleanup
+        try (Tn3270 terminal = new Tn3270()) {
             // Connect to mainframe
             System.out.println("Connecting to mainframe...");
             terminal.connect("your-mainframe-host.com", 23);
@@ -56,31 +55,24 @@ public class Tn3270Example {
             System.err.println("Connection error: " + e.getMessage());
         } catch (InterruptedException e) {
             System.err.println("Interrupted: " + e.getMessage());
-        } finally {
-            try {
-                terminal.disconnect();
-                System.out.println("Disconnected.");
-            } catch (IOException e) {
-                System.err.println("Error disconnecting: " + e.getMessage());
-            }
         }
+        // Terminal is automatically closed here due to AutoCloseable
+        System.out.println("Connection automatically closed.");
     }
     
     public static void simpleScreenListener() {
-        Tn3270 terminal = new Tn3270();
-        
-        // Add a screen update listener
-        terminal.addScreenUpdateListener(new ScreenUpdateListener() {
-            @Override
-            public void onScreenUpdate() {
-                System.out.println("Screen updated!");
-                System.out.println("Current screen content:");
-                System.out.println(terminal.getScreenText());
-                System.out.println("Cursor position: " + terminal.getBuffer().getCursorPosition());
-            }
-        });
-        
-        try {
+        try (Tn3270 terminal = new Tn3270()) {
+            // Add a screen update listener
+            terminal.addScreenUpdateListener(new ScreenUpdateListener() {
+                @Override
+                public void onScreenUpdate() {
+                    System.out.println("Screen updated!");
+                    System.out.println("Current screen content:");
+                    System.out.println(terminal.getScreenText());
+                    System.out.println("Cursor position: " + terminal.getBuffer().getCursorPosition());
+                }
+            });
+            
             terminal.connect("mainframe.example.com", 23);
             
             // Let it run for a while to see updates
@@ -88,19 +80,11 @@ public class Tn3270Example {
             
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
-        } finally {
-            try {
-                terminal.disconnect();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
     
     public static void fieldNavigationExample() {
-        Tn3270 terminal = new Tn3270();
-        
-        try {
+        try (Tn3270 terminal = new Tn3270()) {
             terminal.connect();
             terminal.waitForConnection();
             
@@ -119,12 +103,6 @@ public class Tn3270Example {
             
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
-        } finally {
-            try {
-                terminal.disconnect();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
 }
