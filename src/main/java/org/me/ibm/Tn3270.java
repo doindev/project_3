@@ -40,18 +40,20 @@ public class Tn3270 {
             
             // Initialize telnet options negotiation
             telnetOptions = new TelnetOptions(socket.getInputStream(), socket.getOutputStream());
+            telnetOptions.setBuffer(buffer);
             
             // Initialize screen with output stream for sending commands
             screen = new Screen(buffer, socket.getOutputStream());
             
-            // Negotiate telnet options
-            telnetOptions.negotiateOptions();
+            // Negotiate telnet options and get first non-telnet byte
+            final int firstDataByte = telnetOptions.negotiateOptions();
             
             // Initialize and start data stream parser
             parser = new DataStreamParser(buffer, socket.getInputStream(), telnetOptions);
+            
             parserThread = new Thread(() -> {
                 try {
-                    parser.parse();
+                    parser.parse(firstDataByte);
                 } catch (IOException e) {
                     if (connected) {
                         System.err.println("Data stream parser error: " + e.getMessage());

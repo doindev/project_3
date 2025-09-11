@@ -21,7 +21,16 @@ public class DataStreamParser {
     }
     
     public void parse() throws IOException {
+        parse(-1); // No first byte provided
+    }
+    
+    public void parse(int firstByte) throws IOException {
         running = true;
+        
+        // Process the first byte if provided
+        if (firstByte != -1) {
+            processByte((byte) firstByte);
+        }
         
         // Use single byte reads to handle telnet protocol properly
         while (running) {
@@ -44,85 +53,34 @@ public class DataStreamParser {
     
     private byte[] dataBuffer = new byte[8192];
     private int dataBufferPos = 0;
-    private boolean inTelnetCommand = false;
-    private byte[] telnetBuffer = new byte[256];
-    private int telnetBufferPos = 0;
     
     private void processByte(byte b) throws IOException {
-        if (b == TelnetConstants.IAC && !inTelnetCommand) {
-            // Start of telnet command
-            inTelnetCommand = true;
-            telnetBufferPos = 0;
-            telnetBuffer[telnetBufferPos++] = b;
-            
-            // Process any pending data first
+        // First try to let TelnetOptions handle any ongoing telnet negotiations
+        if (telnetOptions != null && telnetOptions.processOngoingTelnetByte(b)) {
+            // The byte was consumed as a telnet command, process any pending data
             if (dataBufferPos > 0) {
                 processDataStream(dataBuffer, dataBufferPos);
                 dataBufferPos = 0;
             }
-            
-        } else if (inTelnetCommand) {
-            // Continue building telnet command
-            if (telnetBufferPos < telnetBuffer.length) {
-                telnetBuffer[telnetBufferPos++] = b;
-            }
-            
-            // Check if we have a complete telnet command
-            if (isCompleteTelnetCommand()) {
-                processTelnetCommand(telnetBuffer, 0, telnetBufferPos);
-                inTelnetCommand = false;
-                telnetBufferPos = 0;
-            }
-            
+            return;
+        }
+        
+        // This is a normal 3270 data byte
+        if (dataBufferPos < dataBuffer.length) {
+            dataBuffer[dataBufferPos++] = b;
         } else {
-            // Normal data byte
-            if (dataBufferPos < dataBuffer.length) {
-                dataBuffer[dataBufferPos++] = b;
-            } else {
-                // Buffer is full, process it
-                processDataStream(dataBuffer, dataBufferPos);
-                dataBufferPos = 0;
-                dataBuffer[dataBufferPos++] = b;
-            }
+            // Buffer is full, process it
+            processDataStream(dataBuffer, dataBufferPos);
+            dataBufferPos = 0;
+            dataBuffer[dataBufferPos++] = b;
         }
     }
     
-    private boolean isCompleteTelnetCommand() {
-        if (telnetBufferPos < 2) return false;
-        
-        byte command = telnetBuffer[1];
-        
-        switch (command) {
-            case TelnetConstants.DO:
-            case TelnetConstants.DONT:
-            case TelnetConstants.WILL:
-            case TelnetConstants.WONT:
-                return telnetBufferPos >= 3;
-                
-            case TelnetConstants.SB:
-                // Subnegotiation - look for IAC SE
-                if (telnetBufferPos >= 4) {
-                    for (int i = 2; i < telnetBufferPos - 1; i++) {
-                        if (telnetBuffer[i] == TelnetConstants.IAC && 
-                            telnetBuffer[i + 1] == TelnetConstants.SE) {
-                            return true;
-                        }
-                    }
-                }
-                return false;
-                
-            case TelnetConstants.SE:
-                // End of Record in 3270 context
-                return true;
-                
-            default:
-                return telnetBufferPos >= 2;
-        }
-    }
     
     public void stop() {
         running = false;
     }
+    
     
     private void processDataStream(byte[] data, int length) throws IOException {
         int i = 0;
@@ -133,40 +91,6 @@ public class DataStreamParser {
         }
     }
     
-    private void processTelnetCommand(byte[] data, int index, int length) throws IOException {
-        if (length < 2) return;
-        
-        byte command = data[1];
-        
-        switch (command) {
-            case TelnetConstants.SE: // End of Record marker
-                buffer.notifyScreenUpdate();
-                break;
-                
-            case TelnetConstants.SB: // Subnegotiation
-                // Handle subnegotiation if telnetOptions is available
-                if (telnetOptions != null) {
-                    // Let TelnetOptions handle this
-                    // For now, just ignore during data parsing
-                }
-                break;
-                
-            case TelnetConstants.DO:
-            case TelnetConstants.DONT:
-            case TelnetConstants.WILL:
-            case TelnetConstants.WONT:
-                // Handle ongoing option negotiations if telnetOptions is available
-                if (telnetOptions != null && length >= 3) {
-                    // Let TelnetOptions handle this
-                    // For now, just ignore during data parsing
-                }
-                break;
-                
-            default:
-                // Unknown telnet command, ignore
-                break;
-        }
-    }
     
     public int processCommand(byte[] data, int index, int length) throws IOException {
         if (index >= length) return index;

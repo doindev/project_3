@@ -10,6 +10,7 @@ public class TelnetOptions {
     private boolean binaryMode;
     private boolean endOfRecord;
     private String terminalType;
+    private Buffer buffer;
     
     public TelnetOptions(InputStream inputStream, OutputStream outputStream) {
         this.inputStream = inputStream;
@@ -17,9 +18,14 @@ public class TelnetOptions {
         this.binaryMode = false;
         this.endOfRecord = false;
         this.terminalType = TelnetConstants.TERMINAL_TYPE_IBM3278;
+        this.buffer = null;
     }
     
-    public void negotiateOptions() throws IOException {
+    public void setBuffer(Buffer buffer) {
+        this.buffer = buffer;
+    }
+    
+    public int negotiateOptions() throws IOException {
         // Send initial telnet option negotiations for 3270 terminal
         
         // Negotiate Binary mode
@@ -37,97 +43,124 @@ public class TelnetOptions {
         sendWill(TelnetConstants.SUPPRESS_GO_AHEAD);
         sendDo(TelnetConstants.SUPPRESS_GO_AHEAD);
         
-        // Process incoming option negotiations - initial burst
-        processInitialNegotiations();
-    }
-    
-    private void processInitialNegotiations() throws IOException {
-        // Process telnet negotiations for a reasonable amount of time
-        // This allows for the back-and-forth negotiation process
-        long startTime = System.currentTimeMillis();
-        long timeout = 3000; // 3 seconds for initial negotiations
-        
-        while (System.currentTimeMillis() - startTime < timeout) {
-            try {
-                // Read one byte at a time to handle streaming telnet data
-                int b = inputStream.read();
-                if (b == -1) {
-                    break; // End of stream
-                }
-                
-                processTelnetByte((byte) b);
-                
-            } catch (IOException e) {
-                // Socket timeout or other IO error
-                break;
-            }
-        }
+        // Process telnet negotiations byte by byte until we get first non-telnet byte
+        return processNegotiationsUntilData();
     }
     
     private byte[] negotiationBuffer = new byte[256];
     private int bufferPos = 0;
+    private boolean inTelnetCommand = false;
     
-    private void processTelnetByte(byte b) throws IOException {
-        negotiationBuffer[bufferPos++] = b;
+    private int processNegotiationsUntilData() throws IOException {
+        long startTime = System.currentTimeMillis();
+        long timeout = 5000; // 5 seconds timeout for negotiations
         
-        // Check if we have a complete telnet command
-        if (bufferPos >= 3 && negotiationBuffer[0] == TelnetConstants.IAC) {
-            byte command = negotiationBuffer[1];
-            
-            switch (command) {
-                case TelnetConstants.DO:
-                case TelnetConstants.DONT:
-                case TelnetConstants.WILL:
-                case TelnetConstants.WONT:
-                    if (bufferPos >= 3) {
-                        processTelnetCommand(negotiationBuffer[1], negotiationBuffer[2]);
-                        resetBuffer();
-                    }
-                    break;
-                    
-                case TelnetConstants.SB:
-                    // Subnegotiation - need to find IAC SE
-                    if (bufferPos >= 2 && 
-                        negotiationBuffer[bufferPos - 2] == TelnetConstants.IAC && 
-                        negotiationBuffer[bufferPos - 1] == TelnetConstants.SE) {
-                        processSubnegotiation();
-                        resetBuffer();
-                    }
-                    break;
-                    
-                default:
-                    resetBuffer();
-                    break;
+        while (System.currentTimeMillis() - startTime < timeout) {
+            int b = inputStream.read();
+            if (b == -1) {
+                throw new IOException("Connection closed during telnet negotiation");
             }
-        } else if (bufferPos >= negotiationBuffer.length) {
-            // Buffer overflow protection
-            resetBuffer();
-        } else if (bufferPos == 1 && b != TelnetConstants.IAC) {
-            // Not a telnet command, reset
-            resetBuffer();
+            
+            // Check if this byte starts or continues a telnet command
+            if (b == TelnetConstants.IAC && !inTelnetCommand) {
+                // Start of telnet command
+                inTelnetCommand = true;
+                bufferPos = 0;
+                negotiationBuffer[bufferPos++] = (byte) b;
+                continue;
+            }
+            
+            if (inTelnetCommand) {
+                // Continue building telnet command
+                if (bufferPos < negotiationBuffer.length) {
+                    negotiationBuffer[bufferPos++] = (byte) b;
+                }
+                
+                // Check if we have a complete telnet command
+                if (isCompleteTelnetCommand()) {
+                    processTelnetCommand();
+                    inTelnetCommand = false;
+                    bufferPos = 0;
+                }
+                continue;
+            }
+            
+            // This is the first non-telnet byte, return it
+            return b;
+        }
+        
+        throw new IOException("Telnet negotiation timeout");
+    }
+    
+    private boolean isCompleteTelnetCommand() {
+        if (bufferPos < 2) return false;
+        
+        byte command = negotiationBuffer[1];
+        
+        switch (command) {
+            case TelnetConstants.DO:
+            case TelnetConstants.DONT:
+            case TelnetConstants.WILL:
+            case TelnetConstants.WONT:
+                return bufferPos >= 3;
+                
+            case TelnetConstants.SB:
+                // Subnegotiation - look for IAC SE
+                if (bufferPos >= 4) {
+                    for (int i = 2; i < bufferPos - 1; i++) {
+                        if (negotiationBuffer[i] == TelnetConstants.IAC && 
+                            negotiationBuffer[i + 1] == TelnetConstants.SE) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+                
+            default:
+                return bufferPos >= 2;
         }
     }
     
-    private void resetBuffer() {
-        bufferPos = 0;
-    }
-    
-    private void processTelnetCommand(byte command, byte option) throws IOException {
+    private void processTelnetCommand() throws IOException {
+        if (bufferPos < 2) return;
+        
+        byte command = negotiationBuffer[1];
+        
         switch (command) {
             case TelnetConstants.DO:
-                handleDo(option);
+                if (bufferPos >= 3) {
+                    handleDo(negotiationBuffer[2]);
+                }
                 break;
                 
             case TelnetConstants.DONT:
-                handleDont(option);
+                if (bufferPos >= 3) {
+                    handleDont(negotiationBuffer[2]);
+                }
                 break;
                 
             case TelnetConstants.WILL:
-                handleWill(option);
+                if (bufferPos >= 3) {
+                    handleWill(negotiationBuffer[2]);
+                }
                 break;
                 
             case TelnetConstants.WONT:
-                handleWont(option);
+                if (bufferPos >= 3) {
+                    handleWont(negotiationBuffer[2]);
+                }
+                break;
+                
+            case TelnetConstants.SB:
+                processSubnegotiation();
+                break;
+                
+            case TelnetConstants.SE:
+                // End of Record marker - important for 3270
+                // This should trigger a screen update
+                if (buffer != null) {
+                    buffer.notifyScreenUpdate();
+                }
                 break;
         }
     }
@@ -265,5 +298,34 @@ public class TelnetOptions {
     
     public void setTerminalType(String terminalType) {
         this.terminalType = terminalType;
+    }
+    
+    // Method for ongoing telnet command processing during normal operation
+    public boolean processOngoingTelnetByte(byte b) throws IOException {
+        // Check if this byte starts or continues a telnet command
+        if (b == TelnetConstants.IAC && !inTelnetCommand) {
+            // Start of telnet command
+            inTelnetCommand = true;
+            bufferPos = 0;
+            negotiationBuffer[bufferPos++] = b;
+            return true; // This byte was consumed as telnet
+        }
+        
+        if (inTelnetCommand) {
+            // Continue building telnet command
+            if (bufferPos < negotiationBuffer.length) {
+                negotiationBuffer[bufferPos++] = b;
+            }
+            
+            // Check if we have a complete telnet command
+            if (isCompleteTelnetCommand()) {
+                processTelnetCommand();
+                inTelnetCommand = false;
+                bufferPos = 0;
+            }
+            return true; // This byte was consumed as telnet
+        }
+        
+        return false; // This byte is not telnet-related
     }
 }
