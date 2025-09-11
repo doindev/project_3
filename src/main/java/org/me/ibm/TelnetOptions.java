@@ -61,7 +61,7 @@ public class TelnetOptions {
                 throw new IOException("Connection closed during telnet negotiation");
             }
             
-            // Check if this byte starts or continues a telnet command
+            // Check if this byte starts a telnet command
             if (b == TelnetConstants.IAC && !inTelnetCommand) {
                 // Start of telnet command
                 inTelnetCommand = true;
@@ -78,10 +78,29 @@ public class TelnetOptions {
                 
                 // Check if we have a complete telnet command
                 if (isCompleteTelnetCommand()) {
-                    processTelnetCommand();
+                    Integer dataByte = processTelnetCommand();
                     inTelnetCommand = false;
                     bufferPos = 0;
+                    
+                    // If processTelnetCommand returned a data byte (from IAC IAC), return it
+                    if (dataByte != null) {
+                        return dataByte;
+                    }
+                    
+                    // Otherwise, continue reading for more data
+                    continue;
                 }
+                // If telnet command is not complete, continue reading more bytes
+                continue;
+            }
+            
+            // This byte is not part of a telnet sequence, it's actual data
+            // Make sure it's not IAC (255) - if it is, it should have been handled above
+            if (b == TelnetConstants.IAC) {
+                // This shouldn't happen, but if it does, treat as start of telnet command
+                inTelnetCommand = true;
+                bufferPos = 0;
+                negotiationBuffer[bufferPos++] = (byte) b;
                 continue;
             }
             
@@ -116,13 +135,21 @@ public class TelnetOptions {
                 }
                 return false;
                 
+            case TelnetConstants.IAC:
+                // IAC IAC - escaped 255 byte, complete when we have both
+                return bufferPos >= 2;
+                
+            case TelnetConstants.SE:
+                // End of record marker - complete with just IAC SE
+                return bufferPos >= 2;
+                
             default:
                 return bufferPos >= 2;
         }
     }
     
-    private void processTelnetCommand() throws IOException {
-        if (bufferPos < 2) return;
+    private Integer processTelnetCommand() throws IOException {
+        if (bufferPos < 2) return null;
         
         byte command = negotiationBuffer[1];
         
@@ -162,7 +189,14 @@ public class TelnetOptions {
                     buffer.notifyScreenUpdate();
                 }
                 break;
+                
+            case TelnetConstants.IAC:
+                // IAC IAC - this represents a literal 255 byte in the data stream
+                // Return it as data
+                return 255;
         }
+        
+        return null; // Command was processed, no data to return
     }
     
     private void processSubnegotiation() throws IOException {
@@ -301,14 +335,15 @@ public class TelnetOptions {
     }
     
     // Method for ongoing telnet command processing during normal operation
-    public boolean processOngoingTelnetByte(byte b) throws IOException {
+    // Returns: null = not telnet related, -1 = telnet consumed, or data byte (0-255)
+    public Integer processOngoingTelnetByte(byte b) throws IOException {
         // Check if this byte starts or continues a telnet command
         if (b == TelnetConstants.IAC && !inTelnetCommand) {
             // Start of telnet command
             inTelnetCommand = true;
             bufferPos = 0;
             negotiationBuffer[bufferPos++] = b;
-            return true; // This byte was consumed as telnet
+            return -1; // This byte was consumed as telnet
         }
         
         if (inTelnetCommand) {
@@ -319,13 +354,21 @@ public class TelnetOptions {
             
             // Check if we have a complete telnet command
             if (isCompleteTelnetCommand()) {
-                processTelnetCommand();
+                Integer dataByte = processTelnetCommand();
                 inTelnetCommand = false;
                 bufferPos = 0;
+                
+                if (dataByte != null) {
+                    // IAC IAC resulted in a literal 255 byte
+                    return dataByte;
+                } else {
+                    // Normal telnet command was processed
+                    return -1;
+                }
             }
-            return true; // This byte was consumed as telnet
+            return -1; // This byte was consumed as telnet (command not complete yet)
         }
         
-        return false; // This byte is not telnet-related
+        return null; // This byte is not telnet-related
     }
 }

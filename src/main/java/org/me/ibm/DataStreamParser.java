@@ -56,13 +56,33 @@ public class DataStreamParser {
     
     private void processByte(byte b) throws IOException {
         // First try to let TelnetOptions handle any ongoing telnet negotiations
-        if (telnetOptions != null && telnetOptions.processOngoingTelnetByte(b)) {
-            // The byte was consumed as a telnet command, process any pending data
-            if (dataBufferPos > 0) {
-                processDataStream(dataBuffer, dataBufferPos);
-                dataBufferPos = 0;
+        if (telnetOptions != null) {
+            Integer telnetResult = telnetOptions.processOngoingTelnetByte(b);
+            
+            if (telnetResult != null) {
+                // Telnet processing occurred
+                if (telnetResult == -1) {
+                    // The byte was consumed as a telnet command, process any pending data
+                    if (dataBufferPos > 0) {
+                        processDataStream(dataBuffer, dataBufferPos);
+                        dataBufferPos = 0;
+                    }
+                    return;
+                } else {
+                    // telnetResult contains a data byte (from IAC IAC -> 255)
+                    byte dataByte = (byte) telnetResult.intValue();
+                    // Process this as a normal data byte
+                    if (dataBufferPos < dataBuffer.length) {
+                        dataBuffer[dataBufferPos++] = dataByte;
+                    } else {
+                        // Buffer is full, process it
+                        processDataStream(dataBuffer, dataBufferPos);
+                        dataBufferPos = 0;
+                        dataBuffer[dataBufferPos++] = dataByte;
+                    }
+                    return;
+                }
             }
-            return;
         }
         
         // This is a normal 3270 data byte
