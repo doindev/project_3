@@ -57,12 +57,13 @@ public class TelnetOptions {
         
         while (System.currentTimeMillis() - startTime < timeout) {
             int b = inputStream.read();
+            
             if (b == -1) {
                 throw new IOException("Connection closed during telnet negotiation");
             }
             
             // Check if this byte starts a telnet command
-            if (b == TelnetConstants.IAC && !inTelnetCommand) {
+            if (((byte)b) == TelnetConstants.IAC && !inTelnetCommand) {
                 // Start of telnet command
                 inTelnetCommand = true;
                 bufferPos = 0;
@@ -112,7 +113,9 @@ public class TelnetOptions {
     }
     
     private boolean isCompleteTelnetCommand() {
-        if (bufferPos < 2) return false;
+        if (bufferPos < 2) {
+			return false;
+		}
         
         byte command = negotiationBuffer[1];
         
@@ -149,7 +152,9 @@ public class TelnetOptions {
     }
     
     private Integer processTelnetCommand() throws IOException {
-        if (bufferPos < 2) return null;
+        if (bufferPos < 2) {
+			return null;
+		}
         
         byte command = negotiationBuffer[1];
         
@@ -200,7 +205,9 @@ public class TelnetOptions {
     }
     
     private void processSubnegotiation() throws IOException {
-        if (bufferPos < 5) return; // Too short for valid subnegotiation
+        if (bufferPos < 5) {
+			return; // Too short for valid subnegotiation
+		}
         
         byte option = negotiationBuffer[2];
         
