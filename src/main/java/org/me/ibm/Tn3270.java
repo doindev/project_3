@@ -3,8 +3,13 @@ package org.me.ibm;
 import java.io.IOException;
 import java.net.Socket;
 
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+
 public class Tn3270 implements AutoCloseable {
     private Socket socket;
+    private int timeout = 10000; // 10 seconds
     private TelnetOptions telnetOptions;
     private Buffer buffer;
     private Screen screen;
@@ -33,10 +38,30 @@ public class Tn3270 implements AutoCloseable {
         }
         
         try {
-            // Create socket connection
-            socket = new Socket(hostname, port);
-            socket.setKeepAlive(true);
-            socket.setTcpNoDelay(true);
+          try {
+          	SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+              SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
+//              sslSocket.setSoTimeout(timeout);
+              
+              // Connect to the remote host
+              sslSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
+              
+              // Start TLS handshake
+              sslSocket.startHandshake();
+              
+              socket = sslSocket;
+          } catch (SSLHandshakeException e) {
+          	try {
+          		Socket plainSocket = new Socket();
+//          		plainSocket.setSoTimeout(timeout);
+          		plainSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
+          		socket = plainSocket;
+          	} catch (IOException ex) {
+  				throw e;
+  			}
+          } catch (IOException e) {
+              throw e;
+          }
             
             // Initialize telnet options negotiation
             telnetOptions = new TelnetOptions(socket.getInputStream(), socket.getOutputStream());
@@ -49,7 +74,7 @@ public class Tn3270 implements AutoCloseable {
             final int firstDataByte = telnetOptions.negotiateOptions();
             
             // Initialize and start data stream parser
-            parser = new DataStreamParser(buffer, socket.getInputStream(), telnetOptions);
+            parser = new DataStreamParser(buffer, socket.getInputStream());
             
             parserThread = new Thread(() -> {
                 try {
