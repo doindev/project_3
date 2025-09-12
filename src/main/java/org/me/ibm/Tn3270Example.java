@@ -18,38 +18,42 @@ public class Tn3270Example {
             System.out.println("Connected! Current screen:");
             System.out.println(terminal.getScreenText());
             
-            // Example: Login sequence
-            // Navigate to userid field and enter userid
-            terminal.home(); // Go to first unprotected field
-            terminal.type("MYUSERID");
+           //            // Example: Login sequence
+//            // Navigate to userid field and enter userid
+//            terminal.home(); // Go to first unprotected field
+//            terminal.type("MYUSERID");
+//            
+//            // Tab to password field and enter password
+//            terminal.tab();
+//            terminal.type("MYPASSWORD");
+//            
+//            // Press Enter to submit
+//            terminal.sendEnter();
+//            
+//            // Wait for response
+//            terminal.waitForScreenUpdate();
+//            System.out.println("After login:");
+//            System.out.println(terminal.getScreenText());
+//            
+//            // Example: Navigate through application
+//            terminal.sendPF(3); // Press PF3
+//            terminal.waitForScreenUpdate();
+//            
+//            System.out.println("After PF3:");
+//            System.out.println(terminal.getScreenText());
+//            
+//            // Example: Type at specific position
+//            terminal.type(10, 20, "Hello World");
+//            terminal.sendEnter();
+//            terminal.waitForScreenUpdate();
+//            
+//            // Get specific row text
+//            String row5 = terminal.getScreenText(5);
+//            System.out.println("Row 5: " + row5);
+
+            Thread.sleep(20000); // Pause for 2 seconds
             
-            // Tab to password field and enter password
-            terminal.tab();
-            terminal.type("MYPASSWORD");
-            
-            // Press Enter to submit
-            terminal.sendEnter();
-            
-            // Wait for response
-            terminal.waitForScreenUpdate();
-            System.out.println("After login:");
-            System.out.println(terminal.getScreenText());
-            
-            // Example: Navigate through application
-            terminal.sendPF(3); // Press PF3
-            terminal.waitForScreenUpdate();
-            
-            System.out.println("After PF3:");
-            System.out.println(terminal.getScreenText());
-            
-            // Example: Type at specific position
-            terminal.type(10, 20, "Hello World");
-            terminal.sendEnter();
-            terminal.waitForScreenUpdate();
-            
-            // Get specific row text
-            String row5 = terminal.getScreenText(5);
-            System.out.println("Row 5: " + row5);
+            terminal.disconnect();
             
         } catch (IOException e) {
             System.err.println("Connection error: " + e.getMessage());
