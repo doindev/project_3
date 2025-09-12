@@ -2,21 +2,18 @@ package org.me.ibm;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 public class DataStreamParser {
     private final Buffer buffer;
     private final InputStream inputStream;
     private boolean running;
-    private final TelnetOptions telnetOptions;
-    
+    private boolean debug = true;
+   
     public DataStreamParser(Buffer buffer, InputStream inputStream) {
-        this(buffer, inputStream, null);
-    }
-    
-    public DataStreamParser(Buffer buffer, InputStream inputStream, TelnetOptions telnetOptions) {
         this.buffer = buffer;
         this.inputStream = inputStream;
-        this.telnetOptions = telnetOptions;
         this.running = false;
     }
     
@@ -26,21 +23,35 @@ public class DataStreamParser {
     
     public void parse(int firstByte) throws IOException {
         running = true;
-        
+        boolean iacMode = false;
+
         // Process the first byte if provided
         if (firstByte != -1) {
-            processByte((byte) firstByte);
+        	System.out.println(firstByte);
+            bufferByte((byte) firstByte);
         }
         
         // Use single byte reads to handle telnet protocol properly
         while (running) {
             try {
                 int b = inputStream.read();
+                System.out.println(b);
                 if (b == -1) {
                     break; // End of stream
                 }
                 
-                processByte((byte) b);
+                if(!iacMode) {
+                	if(((byte)b) == TelnetConstants.IAC) {
+    					iacMode = true;
+    					continue; // Read next byte for command
+    				}
+                } else if(((byte)b) == TelnetConstants.EOR) {
+					iacMode = false;
+					processDataStream(dataBuffer, dataBufferPos);
+					continue; // Read next byte for command
+				}
+                
+                bufferByte((byte) b);
                 
             } catch (IOException e) {
                 if (running) {
@@ -54,38 +65,8 @@ public class DataStreamParser {
     private byte[] dataBuffer = new byte[8192];
     private int dataBufferPos = 0;
     
-    private void processByte(byte b) throws IOException {
-        // First try to let TelnetOptions handle any ongoing telnet negotiations
-        if (telnetOptions != null) {
-            Integer telnetResult = telnetOptions.processOngoingTelnetByte(b);
-            
-            if (telnetResult != null) {
-                // Telnet processing occurred
-                if (telnetResult == -1) {
-                    // The byte was consumed as a telnet command, process any pending data
-                    if (dataBufferPos > 0) {
-                        processDataStream(dataBuffer, dataBufferPos);
-                        dataBufferPos = 0;
-                    }
-                    return;
-                } else {
-                    // telnetResult contains a data byte (from IAC IAC -> 255)
-                    byte dataByte = (byte) telnetResult.intValue();
-                    // Process this as a normal data byte
-                    if (dataBufferPos < dataBuffer.length) {
-                        dataBuffer[dataBufferPos++] = dataByte;
-                    } else {
-                        // Buffer is full, process it
-                        processDataStream(dataBuffer, dataBufferPos);
-                        dataBufferPos = 0;
-                        dataBuffer[dataBufferPos++] = dataByte;
-                    }
-                    return;
-                }
-            }
-        }
-        
-        // This is a normal 3270 data byte
+    private void bufferByte(byte b) throws IOException {
+    	// This is a normal 3270 data byte
         if (dataBufferPos < dataBuffer.length) {
             dataBuffer[dataBufferPos++] = b;
         } else {
@@ -104,7 +85,7 @@ public class DataStreamParser {
     
     private void processDataStream(byte[] data, int length) throws IOException {
         int i = 0;
-        
+
         while (i < length) {
             // Process 3270 command (no more IAC processing here since it's handled at byte level)
             i = processCommand(data, i, length);
@@ -113,28 +94,52 @@ public class DataStreamParser {
     
     
     public int processCommand(byte[] data, int index, int length) throws IOException {
-        if (index >= length) return index;
+        if (index >= length) {
+			return index;
+		}
         
         byte command = data[index];
+       
+        if((command & 0xFF) < 240) {
+        	command = (byte)((command & 0xFF) + 240);
+        }
         
         switch (command) {
             case TelnetConstants.WRITE:
+            	if(debug) {
+					System.out.println((command & 0xFF) + " CMD_WRITE");
+				}
                 return processWrite(data, index + 1, length);
                 
             case TelnetConstants.ERASE_WRITE:
+            	if(debug) {
+					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE");
+				}
                 buffer.clear();
                 return processWrite(data, index + 1, length);
                 
             case TelnetConstants.ERASE_WRITE_ALTERNATE:
+            	if(debug) {
+					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE_ALTERNATE");
+				}
                 buffer.clear();
                 return processWrite(data, index + 1, length);
                 
             case TelnetConstants.READ_BUFFER:
+            	if(debug) {
+					System.out.println((command & 0xFF) + " CMD_READ_BUFFER");
+				}
+            	return index + 1;
             case TelnetConstants.READ_MODIFIED:
+            	if(debug) {
+					System.out.println((command & 0xFF) + " CMD_READ_MODIFIED");
+				}
+            	return index + 1;
             case TelnetConstants.READ_MODIFIED_ALL:
-                // These are typically responses, not commands to process
+            	if(debug) {
+					System.out.println((command & 0xFF) + " CMD_READ_MODIFIED_ALL");
+				}
                 return index + 1;
-                
             default:
                 // Treat as data character
                 return processCharacter(data, index, length);
@@ -142,7 +147,9 @@ public class DataStreamParser {
     }
     
     private int processWrite(byte[] data, int index, int length) throws IOException {
-        if (index >= length) return index;
+        if (index >= length) {
+			return index;
+		}
         
         // Process Write Control Character
         index = processWriteControlCharacter(data, index, length);
@@ -204,38 +211,63 @@ public class DataStreamParser {
     }
     
     public int processWriteControlCharacter(byte[] data, int index, int length) {
-        if (index >= length) return index;
-        
+        if (index >= length) {
+			return index;
+		}
+       
+        List<String> wccFlags = new ArrayList<>();
+
         byte wcc = data[index];
         
         // Process Write Control Character bits
         if ((wcc & TelnetConstants.WCC_RESET) != 0) {
             // Reset operation
+        	wccFlags.add("RESET_MDT");
+			buffer.clear();
         }
         
         if ((wcc & TelnetConstants.WCC_PRINT) != 0) {
             // Print operation
+        	wccFlags.add("PRINT");
         }
         
         if ((wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
             // Start printer
+        	wccFlags.add("START_PRINTER");
         }
         
         if ((wcc & TelnetConstants.WCC_SOUND_ALARM) != 0) {
             // Sound alarm
+        	wccFlags.add("SOUND_ALARM");
         }
         
         if ((wcc & TelnetConstants.WCC_KEYBOARD_RESTORE) != 0) {
             // Restore keyboard
+        	wccFlags.add("KEYBOARD_RESTORE");
         }
+        
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " wcc [" + String.join(", ", wccFlags) + "]");
+		}
         
         return index + 1;
     }
     
     public int processStartField(byte[] data, int index, int length) {
-        if (index + 1 >= length) return index + 1;
+        if (index + 1 >= length) {
+			return index + 1;
+		}
         
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_SF");
+		}
+         
         byte attribute = data[index + 1];
+        
+        if(debug) {
+			System.out.println((attribute & 0xFF) + " attr");
+		}
+        
         int currentPos = buffer.getCursorPosition();
         
         buffer.setFieldStart(currentPos, true);
@@ -249,10 +281,20 @@ public class DataStreamParser {
     }
     
     public int processStartFieldExtended(byte[] data, int index, int length) {
-        if (index + 1 >= length) return index + 1;
+        if (index + 1 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_SFE");
+		}
         
         int pos = index + 1;
         byte paramCount = data[pos++];
+        
+        if(debug) {
+			System.out.println((paramCount & 0xFF) + " paramCount");
+		}
         
         int currentPos = buffer.getCursorPosition();
         buffer.setFieldStart(currentPos, true);
@@ -261,6 +303,11 @@ public class DataStreamParser {
         for (int i = 0; i < paramCount && pos + 1 < length; i++) {
             byte attrType = data[pos++];
             byte attrValue = data[pos++];
+            
+            if(debug) {
+    			System.out.println((attrType & 0xFF) + " attrType");
+    			System.out.println((attrValue & 0xFF) + " attrValue");
+    		}
             
             if (attrType == (byte) 0xC0) { // Basic attribute
                 buffer.setAttribute(currentPos, attrValue);
@@ -275,9 +322,16 @@ public class DataStreamParser {
     }
     
     public int processSetBufferAddress(byte[] data, int index, int length) {
-        if (index + 2 >= length) return index + 1;
+        if (index + 2 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+        	System.out.println((data[index] & 0xFF) + " ORDER_SBA");
+        }
         
         int address = decodeAddress(data[index + 1], data[index + 2]);
+        
         if (address >= 0 && address < buffer.getBufferSize()) {
             buffer.setCursorPosition(address);
         }
@@ -286,7 +340,15 @@ public class DataStreamParser {
     }
     
     public int processSetAttribute(byte[] data, int index, int length) {
-        if (index + 2 >= length) return index + 1;
+        if (index + 2 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+        	System.out.println((data[index] & 0xFF) + " ORDER_SA");
+        	System.out.println((data[index + 1] & 0xFF) + " attrType");
+        	System.out.println((data[index + 2] & 0xFF) + " attrValue");
+        }
         
         byte attrType = data[index + 1];
         byte attrValue = data[index + 2];
@@ -301,7 +363,14 @@ public class DataStreamParser {
     }
     
     public int processModifyField(byte[] data, int index, int length) {
-        if (index + 2 >= length) return index + 1;
+        if (index + 2 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+        	System.out.println((data[index] & 0xFF) + " ORDER_MF");
+        	System.out.println((data[index + 1] & 0xFF) + " paramCount");
+        }
         
         byte paramCount = data[index + 1];
         int pos = index + 2;
@@ -310,6 +379,11 @@ public class DataStreamParser {
         for (int i = 0; i < paramCount && pos + 1 < length; i++) {
             byte attrType = data[pos++];
             byte attrValue = data[pos++];
+            
+            if(debug) {
+    			System.out.println((attrType & 0xFF) + " attrType");
+    			System.out.println((attrValue & 0xFF) + " attrValue");
+    		}
             
             // Modify field attributes at current position
             if (attrType == (byte) 0xC0) {
@@ -322,11 +396,21 @@ public class DataStreamParser {
     }
     
     public int processInsertCursor(byte[] data, int index, int length) {
+    	
+    	if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_IC");
+		}
+    	
         // Insert Cursor order - just move to next position for now
         return index + 1;
     }
     
     public int processProgramTab(byte[] data, int index, int length) {
+    	
+    	if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_PT");
+		}
+    	
         // Program Tab - move to next unprotected field
         int currentPos = buffer.getCursorPosition();
         int nextField = buffer.findNextUnprotectedField(currentPos);
@@ -336,7 +420,13 @@ public class DataStreamParser {
     }
     
     public int processRepeatToAddress(byte[] data, int index, int length) {
-        if (index + 3 >= length) return index + 1;
+        if (index + 3 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_RA");
+		}
         
         int address = decodeAddress(data[index + 1], data[index + 2]);
         byte character = data[index + 3];
@@ -355,7 +445,14 @@ public class DataStreamParser {
     }
     
     public int processGraphicsEscape(byte[] data, int index, int length) {
-        if (index + 1 >= length) return index + 1;
+        if (index + 1 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+        	System.out.println((data[index] & 0xFF) + " ORDER_GE");
+        	System.out.println((data[index + 1] & 0xFF) + " char");
+        }
         
         // Graphics Escape - treat next byte as character
         byte character = data[index + 1];
@@ -368,7 +465,13 @@ public class DataStreamParser {
     }
     
     public int processStructuredField(byte[] data, int index, int length) {
-        if (index + 2 >= length) return index + 1;
+        if (index + 2 >= length) {
+			return index + 1;
+		}
+        
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_STRUCT_FIELD");
+		}
         
         // Skip structured field for now
         int fieldLength = ((data[index] & 0xFF) << 8) | (data[index + 1] & 0xFF);
@@ -376,7 +479,13 @@ public class DataStreamParser {
     }
     
     public int processCharacter(byte[] data, int index, int length) {
-        if (index >= length) return index;
+        if (index >= length) {
+			return index;
+		}
+        
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " CHAR");
+		}
         
         byte b = data[index];
         char character = (char) (b & 0xFF);
@@ -396,8 +505,16 @@ public class DataStreamParser {
     
     private int decodeAddress(byte byte1, byte byte2) {
         // 3270 address decoding
+    	
         int addr1 = (byte1 & 0x3F);
         int addr2 = (byte2 & 0x3F);
+        
+        if(debug) {
+    		System.out.println((byte1 & 0xFF) + " high");
+    		System.out.println((byte2 & 0xFF) + " low");
+    		System.out.println(((addr1 << 6) | addr2) + " final pos");
+    	}
+        
         return (addr1 << 6) | addr2;
     }
     
