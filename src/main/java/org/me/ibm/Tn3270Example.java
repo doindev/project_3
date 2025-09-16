@@ -16,7 +16,7 @@ public class Tn3270Example {
             terminal.waitForScreenUpdate();
             
             System.out.println("Connected! Current screen:");
-            System.out.println(terminal.getScreenText());
+            System.out.println(terminal.screen().getString());
             
            //            // Example: Login sequence
 //            // Navigate to userid field and enter userid
@@ -72,8 +72,8 @@ public class Tn3270Example {
                 public void onScreenUpdate() {
                     System.out.println("Screen updated!");
                     System.out.println("Current screen content:");
-                    System.out.println(terminal.getScreenText());
-                    System.out.println("Cursor position: " + terminal.getBuffer().getCursorPosition());
+                    System.out.println(terminal.screen().getString());
+                    System.out.println("Cursor position: " + terminal.screen().getCursorPosition());
                 }
             });
             
@@ -93,19 +93,19 @@ public class Tn3270Example {
             terminal.waitForConnection();
             
             // Navigate through fields using tab
-            terminal.home(); // Go to first field
-            terminal.type("Field 1 data");
+            terminal.screen().home(); // Go to first field
+            terminal.screen().put("Field 1 data");
             
-            terminal.tab(); // Next field
-            terminal.type("Field 2 data");
+            terminal.screen().tab(); // Next field
+            terminal.screen().put("Field 2 data");
             
-            terminal.tab(); // Next field
-            terminal.type("Field 3 data");
+            terminal.screen().tab(); // Next field
+            terminal.screen().put("Field 3 data");
             
             // Submit the form
-            terminal.sendEnter();
+            terminal.screen().enter();
             
-        } catch (IOException | InterruptedException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
