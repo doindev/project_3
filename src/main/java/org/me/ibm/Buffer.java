@@ -1,18 +1,47 @@
 package org.me.ibm;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
 
 public class Buffer {
-    private final char[] characters;
-    private final byte[] attributes;
+	private TimeUnit UNIT = TimeUnit.MILLISECONDS;
+	private long WAIT = 5000;
+	
+	private Lock lock = new ReentrantLock();
+	private Condition tn3270Cond = lock.newCondition();
+	private Condition eorCond = lock.newCondition();
+	
+	private final char[] ascii;
+    private final byte[] ebcdic;
+    private final char[] asciiWriteBuffer = new char[TelnetConstants.BUFFER_SIZE];
+    private final byte[] ebcdicWriteBuffer = new byte[TelnetConstants.BUFFER_SIZE];
+    private final boolean[] ebcdicModified;
+    private final FieldAttribute[] attributes;
     private final boolean[] fieldStarts;
     private int cursorPosition;
     private final List<ScreenUpdateListener> listeners;
     
+    private int fieldCount = 0;
+    private int ebcdicCount = 0;
+    private int orderCount = 0;
+    private Byte cmd;
+	private Byte wcc;
+    private Integer cmdKey = null;
+    private int ack = 0;
+    private boolean ignoreAckCount = false;
+    
     public Buffer() {
-        this.characters = new char[TelnetConstants.BUFFER_SIZE];
-        this.attributes = new byte[TelnetConstants.BUFFER_SIZE];
+    	this.ascii = new char[TelnetConstants.BUFFER_SIZE];
+        this.ebcdic = new byte[TelnetConstants.BUFFER_SIZE];
+        this.ebcdicModified = new boolean[TelnetConstants.BUFFER_SIZE];
+        this.attributes = new FieldAttribute[TelnetConstants.BUFFER_SIZE];
         this.fieldStarts = new boolean[TelnetConstants.BUFFER_SIZE];
         this.cursorPosition = 0;
         this.listeners = new ArrayList<>();
@@ -20,36 +49,293 @@ public class Buffer {
     }
     
     public void clear() {
-        for (int i = 0; i < TelnetConstants.BUFFER_SIZE; i++) {
-            characters[i] = ' ';
-            attributes[i] = 0;
-            fieldStarts[i] = false;
-        }
+    	Arrays.fill(ascii, ' ');
+    	Arrays.fill(ebcdic, (byte)0x00);//(byte)0x40); // EBCDIC space
+    	Arrays.fill(asciiWriteBuffer, ' ');
+    	Arrays.fill(ebcdicWriteBuffer, (byte)0x00);//(byte)0x40); // EBCDIC space
+    	Arrays.fill(ebcdicModified, false);
+    	Arrays.fill(attributes, new FieldAttribute());
+    	Arrays.fill(fieldStarts, false);
+
         cursorPosition = 0;
+        fieldCount = 0;
+        ebcdicCount = 0;
+        orderCount = 0;
+        cmd = null;
+        cmdKey = null;
+        ack = 0;
+        
+        ebcdicCount = 0;
     }
     
-    public void setCharacter(int position, char character) {
+    public void copyDataToBackground() {
+    	System.arraycopy(ascii, 0, asciiWriteBuffer, 0, ascii.length);
+    	System.arraycopy(ebcdic, 0, ebcdicWriteBuffer, 0, ebcdic.length);
+    	
+    	Arrays.fill(ascii, ' ');
+    	Arrays.fill(ebcdic, (byte)0x00);//(byte)0x40); // EBCDIC space
+    }
+    
+    public void restoreDataFromBackground() {
+		if(hasFields()) {
+			for(int i=0;i<TelnetConstants.BUFFER_SIZE;i++) {
+				if(fieldStarts[i]) {
+					int endIndex = (i+1<TelnetConstants.BUFFER_SIZE?findNextField(i+1):TelnetConstants.BUFFER_SIZE);
+					
+					if(endIndex!= -1) {
+						boolean isNull = true;
+						
+						if(endIndex>i) {
+							for(int j=i;j<endIndex;j++) {
+								if(ebcdic[j] != 0x00) {
+									isNull = false;
+									break;
+								}
+							}
+							
+							if(isNull) {
+//								System.err.println("Restoring field at =============================== " + i + " to " + endIndex + " length: " + (endIndex - i) + "\t, text: \"" + new String(asciiWriteBuffer, i, endIndex - i) + "\"");
+								System.arraycopy(asciiWriteBuffer, i, ascii, i, endIndex - i);
+						    	System.arraycopy(ebcdicWriteBuffer, i, ebcdic, i, endIndex - i);
+							}
+						} else {
+							// test until the end of the buffer
+							for(int j=i;j<TelnetConstants.BUFFER_SIZE;j++) {
+								if(ebcdic[j] != 0x00) {
+									isNull = false;
+									break;
+								}
+							}
+							
+							// test from beginning until the beginning of the field
+							for(int j=0;j<endIndex;j++) {
+								if(ebcdic[j] != 0x00) {
+									isNull = false;
+									break;
+								}
+							}
+							
+							if(isNull) {
+//								System.err.println("Restoring field at ++++++++++++++++++++++++++++++ " + i + " to " + (TelnetConstants.BUFFER_SIZE - i) + " length, text: " + new String(asciiWriteBuffer, i, TelnetConstants.BUFFER_SIZE - i) + " and 0 to " + endIndex + " length, text: \"" + new String(asciiWriteBuffer, 0, endIndex) + "\"");
+								System.arraycopy(asciiWriteBuffer, i, ascii, i, TelnetConstants.BUFFER_SIZE - i);
+						    	System.arraycopy(ebcdicWriteBuffer, i, ebcdic, i, TelnetConstants.BUFFER_SIZE - i);
+						    	
+//						    	System.err.println("Restoring field at ++++++++++++++++++++++++++++++ 0 to " + endIndex + " length, text: \"" + new String(asciiWriteBuffer, 0, endIndex) + "\"");
+						    	System.arraycopy(asciiWriteBuffer, 0, ascii, 0, endIndex);
+						    	System.arraycopy(ebcdicWriteBuffer, 0, ebcdic, 0, endIndex);
+							}
+						}
+						
+						if(endIndex>i) {
+							i = endIndex ;
+						}
+					}
+				}
+			}
+		}
+	}
+    
+    public void resetMdtFlags() {
+    	try {
+    		if(!hasFields()) {
+				return;
+			}
+    		
+    		int currentFiledStart = -1;
+    		FieldAttribute currentAttribute = null;
+			for(int i=0;i<TelnetConstants.BUFFER_SIZE;i++) {
+				int fieldStart = findFieldStart(i);
+				
+				// -1 indicates no field start found, so we can stop processing
+				if(fieldStart<0) {
+					if(
+						currentAttribute!=null && 
+						!currentAttribute.isProtected() &&
+						currentAttribute.isModified()
+					) {
+						attributes[currentFiledStart].modified(false);
+					}
+					continue;
+				}
+				
+				if(fieldStart!=currentFiledStart) {
+					if(
+						currentAttribute!=null && 
+						!currentAttribute.isProtected() &&
+						currentAttribute.isModified()
+					) {
+						attributes[currentFiledStart].modified(false);
+					}
+					currentFiledStart = fieldStart;
+					currentAttribute = attributes[fieldStart];
+				}
+			}
+			
+			if(
+				currentAttribute!=null && 
+				!currentAttribute.isProtected() &&
+				currentAttribute.isModified()
+			) {
+				attributes[currentFiledStart].modified(false);
+			}
+    	} catch (Exception e) {
+    		e.printStackTrace();
+    	}
+	}
+    
+    public void eraseAllUnprotected() {
+    	try {
+    		if(!hasFields()) {
+				return;
+			}
+    		
+    		int currentFiledStart = -1;
+    		FieldAttribute currentAttribute = null;
+			for(int i=0;i<TelnetConstants.BUFFER_SIZE;i++) {
+				int fieldStart = findFieldStart(i);
+				
+				// -1 indicates no field start found, so we can stop processing
+				if(fieldStart<0) {
+					continue;
+				}
+				
+				if(fieldStart!=currentFiledStart) {
+					currentFiledStart = fieldStart;
+					currentAttribute = attributes[fieldStart];
+				}
+
+				if(currentAttribute.isProtected()) {
+					continue;
+				}
+				
+				setEbcdicCharacter(i, (byte)0x00);
+			}
+    	} catch (Exception e) {
+    		e.printStackTrace();
+    	}
+	}
+    
+    public Buffer setIncomingCommandByte(Byte cmd){
+		this.cmd = cmd;
+		return this;
+	}
+    
+    public Buffer setIncomingWriteControlCharacterByte(Byte wcc){
+		this.wcc = wcc;
+		return this;
+	}
+    
+    public Buffer setAidKey(Integer cmdKey){
+    	this.cmdKey = cmdKey;
+    	ack=0;
+    	return this;
+    }
+
+    public Buffer incOrderCount(){
+		orderCount++;
+		return this;
+	}
+    
+    public boolean hasFields() {
+    	return fieldCount>0;
+    }
+    
+    public byte wcc() {
+    	return wcc;
+    }
+    
+    protected void awaitEor() throws InterruptedException{
+		eorCond.await(WAIT, UNIT);
+	}
+	public void awaitEor(long wait, TimeUnit unit) throws InterruptedException{
+		eorCond.await(wait, unit);
+	}
+	public void signalEor(){
+//		if(debug){
+//			System.out.println(new Date().toString() + "   cmd->" + String.format("%1$-" + "3" + "s", String.valueOf(cmd)) + "\teor\t" + 
+//					"orders->" + orders + "\t" +
+//					"ebcdic->" + ebcdic + "\t" +
+//					"ack->" + ack + "\t" + 
+//					"cmdKey->" + cmdKey + "\t" + 
+//					(cmd==null || (orders>0 && ebcdic>1) || (orders==0 && ((cmd!=null && cmd==0) || cmdKey==108 || cmdKey==110)) || cmdKey==109 || (ack>1 || ignoreAckCount)?"ACT":"WAIT") + "\t" + //cmd==1 && !clearFlag?"WAIT":"ACT") + "\t" +
+//					string()
+//				);
+//		}
+//		//				            								pa1				pa2				clear
+		if(cmd==null || (orderCount>0 && ebcdicCount>1) || (orderCount==0 && ((cmd!=null && cmd==0) || (cmdKey==108 || cmdKey==110)) || cmdKey==109 || (ack>1 || ignoreAckCount))){
+			eorCond.signalAll();
+			return;
+		}
+		
+		ack++;
+	}
+	
+	public void awaitTn3270() throws InterruptedException{
+		tn3270Cond.await(WAIT, UNIT);
+	}
+	public void awaitTn3270(long wait, TimeUnit unit) throws InterruptedException{
+		tn3270Cond.await(wait, unit);
+	}
+	public void signalTn3270(){
+		tn3270Cond.signalAll();
+	}
+    
+    public void setEbcdicCharacter(int position, byte ebcdicByte) {
+    	ebcdicCount++;
         if (isValidPosition(position)) {
-            characters[position] = character;
+            ebcdic[position] = ebcdicByte;// == 0? 0x40: ebcdicByte; // Treat null as EBCDIC space
+            ascii[position] = Tn3270Conversions.ebcdicToAscii(ebcdicByte);
+            int sf = findFieldStart(position);
+            FieldAttribute attribute = getAttribute(sf);
+            
+            if(attribute.isModified()) {
+            	ebcdicModified[position] = true;
+            }
         }
     }
     
-    public char getCharacter(int position) {
-        return isValidPosition(position) ? characters[position] : ' ';
+    public void setAsciiCharacter(int position, char character) {
+        if (isValidPosition(position)) {
+            ascii[position] = character;
+            ebcdic[position] = Tn3270Conversions.asciiToEbcdic(character);
+            ebcdicModified[position] = true;
+            
+            // fieldStart will be -1 if not fields defined
+            int fieldStart = findFieldStart(position);
+            if(fieldStart>=0) {
+            	attributes[fieldStart].modified(true);
+            }
+        }
+    }
+    
+    public char getAsciiCharacter(int position) {
+        return isValidPosition(position) ? ascii[position] : ' ';
+    }
+    
+    public byte getEbcdicByte(int position) {
+        return isValidPosition(position) ? ebcdic[position] : 0x40; // EBCDIC space
     }
     
     public void setAttribute(int position, byte attribute) {
         if (isValidPosition(position)) {
-            attributes[position] = attribute;
+            attributes[position] = new FieldAttribute(attribute);
         }
     }
     
-    public byte getAttribute(int position) {
-        return isValidPosition(position) ? attributes[position] : 0;
+    public FieldAttribute getAttribute(int position) {
+        return isValidPosition(position) ? attributes[position] : new FieldAttribute();
     }
+    
+    public FieldAttribute getAttributeAt(int position) {
+		return getAttribute(findFieldStart(position));
+	}
     
     public void setFieldStart(int position, boolean isFieldStart) {
         if (isValidPosition(position)) {
+        	if(isFieldStart) {
+				fieldCount++;
+			}
+
             fieldStarts[position] = isFieldStart;
         }
     }
@@ -59,15 +345,21 @@ public class Buffer {
     }
     
     public boolean isProtected(int position) {
-        if (!isValidPosition(position)) return true;
+        if (!isValidPosition(position)) {
+			return true;
+		}
         
         // Find the field attribute that applies to this position
         int fieldPos = findFieldStart(position);
         if (fieldPos >= 0) {
-            return (attributes[fieldPos] & TelnetConstants.ATTR_PROTECTED) != 0;
+            return (attributes[findFieldStart(fieldPos)].isProtected());
         }
         return false;
     }
+    
+    public boolean isEbcdicModified(int position) {
+		return isValidPosition(position) && ebcdicModified[position];
+	}
     
     public int findFieldStart(int position) {
         for (int i = position; i >= 0; i--) {
@@ -75,6 +367,7 @@ public class Buffer {
                 return i;
             }
         }
+        
         // If no field start found, check from end of buffer
         for (int i = TelnetConstants.BUFFER_SIZE - 1; i > position; i--) {
             if (fieldStarts[i]) {
@@ -84,7 +377,30 @@ public class Buffer {
         return -1;
     }
     
+    public int findNextField(int startPosition) {
+    	if(hasFields()==false) {
+    		return -1;
+    	}
+    	 
+        for (int i = startPosition + 1; i < TelnetConstants.BUFFER_SIZE; i++) {
+            if (fieldStarts[i]) {
+                return i + 1; // Return position after field start
+            }
+        }
+        // Wrap around
+        for (int i = 0; i <= startPosition; i++) {
+            if (fieldStarts[i]) {
+                return i + 1;
+            }
+        }
+        return startPosition;
+    }
+    
     public int findNextUnprotectedField(int startPosition) {
+    	if(hasFields()==false) {
+    		return -1;
+    	}
+    	 
         for (int i = startPosition + 1; i < TelnetConstants.BUFFER_SIZE; i++) {
             if (fieldStarts[i] && !isProtected(i + 1)) {
                 return i + 1; // Return position after field start
@@ -150,8 +466,87 @@ public class Buffer {
         return position >= 0 && position < TelnetConstants.BUFFER_SIZE;
     }
     
+    
+    
+    public String string() {
+		return string(null);
+	}
+	public String string(String separator) {
+		StringBuffer sb = new StringBuffer("");
+		
+		if(separator!=null){
+			for(int row=0;row<TelnetConstants.SCREEN_WIDTH;row++){
+				sb.append( string( row ) );
+				sb.append(separator);
+			}
+		}else{
+			try{
+				sb.append( new String(ascii, 0, TelnetConstants.BUFFER_SIZE) );
+			}catch(Exception e){
+				for(int row=0;row<TelnetConstants.SCREEN_WIDTH;row++) {
+					sb.append( string( row ) );
+				}
+			}
+		}
+
+		return sb.toString();
+	}
+	public String string(int row) {
+		return string((row*TelnetConstants.SCREEN_WIDTH),TelnetConstants.SCREEN_WIDTH);
+	}
+	public String string(int x, int y,int length) {
+		return string((y*TelnetConstants.SCREEN_WIDTH)+x, length);
+	}
+	public String string(int start, int length) {
+		try{
+    		return new String(ascii, start, length);
+    	}catch(Exception e){
+    		StringBuffer sb = new StringBuffer();
+    		
+    		for(int i=start;i<start+length;i++){
+				try{
+					sb.append(new String(ascii, i, 1));
+				}catch(Exception ee){
+					sb.append(" ");
+				}
+			}
+    		return sb.toString();
+    	}
+	}
+    
+	
+	public boolean acquireLock() throws InterruptedException, TimeoutException {
+		return acquireLock(WAIT, UNIT);
+	}
+	public boolean acquireLock(long wait, TimeUnit unit) throws InterruptedException, TimeoutException {
+		if(wait<=0 || unit==null){
+			boolean gotLock = false;
+			while(true){
+				gotLock = lock.tryLock();
+				if(gotLock){
+					return true;
+				}
+			}
+		}else{
+			try { // ++
+				if(!lock.tryLock(wait, unit)){
+					throw new TimeoutException("Timed out waiting for buffer access.");
+				}else{
+					return true;
+				}
+			} catch (InterruptedException ie) { // ++
+				throw new TimeoutException("Timed out waiting for buffer access."); // ++
+			} // ++
+		}
+	}
+	
+	public void unlock(){
+		lock.unlock();
+	}
+    
     public void copyFrom(Buffer other) {
-        System.arraycopy(other.characters, 0, this.characters, 0, TelnetConstants.BUFFER_SIZE);
+        System.arraycopy(other.ebcdic, 0, this.ebcdic, 0, TelnetConstants.BUFFER_SIZE);
+        System.arraycopy(other.ascii, 0, this.ascii, 0, TelnetConstants.BUFFER_SIZE);
         System.arraycopy(other.attributes, 0, this.attributes, 0, TelnetConstants.BUFFER_SIZE);
         System.arraycopy(other.fieldStarts, 0, this.fieldStarts, 0, TelnetConstants.BUFFER_SIZE);
         this.cursorPosition = other.cursorPosition;
