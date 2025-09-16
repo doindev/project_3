@@ -1,15 +1,32 @@
 package org.me.ibm;
 
-import javax.swing.*;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+import javax.swing.Box;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 
 public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
-    private final Tn3270 terminal;
+	private static final long serialVersionUID = 1L;
+	private final Tn3270 terminal;
     private final JTextArea screenArea;
     private final JTextField inputField;
     private final JLabel statusLabel;
@@ -46,11 +63,15 @@ public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
             public void actionPerformed(ActionEvent e) {
                 String text = inputField.getText();
                 if (!text.isEmpty()) {
-                    terminal.type(text);
+                	try {
+                		terminal.screen().putString(text);
+                	} catch(Exception ex) {
+						showError("Error sending data: " + ex.getMessage());
+					}
                     inputField.setText("");
                     try {
-                        terminal.sendEnter();
-                    } catch (IOException ex) {
+                        terminal.screen().enter();
+                    } catch (IOException | InterruptedException | TimeoutException ex) {
                         showError("Error sending data: " + ex.getMessage());
                     }
                 }
@@ -64,47 +85,47 @@ public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
                 try {
                     switch (e.getKeyCode()) {
                         case KeyEvent.VK_F1:
-                            terminal.sendPF(1);
+                            terminal.screen().pf1();
                             break;
                         case KeyEvent.VK_F2:
-                            terminal.sendPF(2);
+                            terminal.screen().pf2();
                             break;
                         case KeyEvent.VK_F3:
-                            terminal.sendPF(3);
+                        	terminal.screen().pf3();
                             break;
                         case KeyEvent.VK_F4:
-                            terminal.sendPF(4);
+                        	terminal.screen().pf4();
                             break;
                         case KeyEvent.VK_F5:
-                            terminal.sendPF(5);
+                        	terminal.screen().pf5();
                             break;
                         case KeyEvent.VK_F6:
-                            terminal.sendPF(6);
+                        	terminal.screen().pf6();
                             break;
                         case KeyEvent.VK_F7:
-                            terminal.sendPF(7);
+                        	terminal.screen().pf7();
                             break;
                         case KeyEvent.VK_F8:
-                            terminal.sendPF(8);
+                        	terminal.screen().pf8();
                             break;
                         case KeyEvent.VK_F9:
-                            terminal.sendPF(9);
+                        	terminal.screen().pf9();
                             break;
                         case KeyEvent.VK_F10:
-                            terminal.sendPF(10);
+                        	terminal.screen().pf10();
                             break;
                         case KeyEvent.VK_F11:
-                            terminal.sendPF(11);
+                        	terminal.screen().pf11();
                             break;
                         case KeyEvent.VK_F12:
-                            terminal.sendPF(12);
+                        	terminal.screen().pf12();
                             break;
                         case KeyEvent.VK_TAB:
-                            terminal.tab();
+                            terminal.screen().tab();
                             e.consume();
                             break;
                     }
-                } catch (IOException ex) {
+                } catch (IOException | InterruptedException | TimeoutException ex) {
                     showError("Error sending key: " + ex.getMessage());
                 }
             }
@@ -144,8 +165,8 @@ public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
         JMenuItem clearItem = new JMenuItem("Clear Screen");
         clearItem.addActionListener(e -> {
             try {
-                terminal.sendClear();
-            } catch (IOException ex) {
+                terminal.screen().clear();
+            } catch (IOException | InterruptedException | TimeoutException ex) {
                 showError("Error clearing screen: " + ex.getMessage());
             }
         });
@@ -173,8 +194,45 @@ public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
         JMenuItem item = new JMenuItem(name);
         item.addActionListener(e -> {
             try {
-                terminal.sendPF(pfNumber);
-            } catch (IOException ex) {
+            	switch (pfNumber) {
+                case 1:
+                    terminal.screen().pf1();
+                    break;
+                case 2:
+                    terminal.screen().pf2();
+                    break;
+                case 3:
+                	terminal.screen().pf3();
+                    break;
+                case 4:
+                	terminal.screen().pf4();
+                    break;
+                case 5:
+                	terminal.screen().pf5();
+                    break;
+                case 6:
+                	terminal.screen().pf6();
+                    break;
+                case 77:
+                	terminal.screen().pf7();
+                    break;
+                case 8:
+                	terminal.screen().pf8();
+                    break;
+                case 9:
+                	terminal.screen().pf9();
+                    break;
+                case 10:
+                	terminal.screen().pf10();
+                    break;
+                case 11:
+                	terminal.screen().pf11();
+                    break;
+                case 12:
+                	terminal.screen().pf12();
+                    break;
+            	}
+            } catch (IOException | InterruptedException | TimeoutException ex) {
                 showError("Error sending " + name + ": " + ex.getMessage());
             }
         });
@@ -185,8 +243,18 @@ public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
         JMenuItem item = new JMenuItem(name);
         item.addActionListener(e -> {
             try {
-                terminal.sendPA(paNumber);
-            } catch (IOException ex) {
+            	switch (paNumber) {
+                case 1:
+                    terminal.screen().pa1();
+                    break;
+                case 2:
+                    terminal.screen().pa2();
+                    break;
+                case 3:
+                	terminal.screen().pa3();
+                    break;
+            	}
+            } catch (IOException | InterruptedException | TimeoutException ex) {
                 showError("Error sending " + name + ": " + ex.getMessage());
             }
         });
@@ -230,12 +298,15 @@ public class SimpleTerminalUI extends JFrame implements ScreenUpdateListener {
     public void onScreenUpdate() {
         SwingUtilities.invokeLater(() -> {
             // Update screen content
-            screenArea.setText(terminal.getScreenText());
+        	try {
+        		screenArea.setText(terminal.screen().getString());
+        	} catch (Exception e) {
+        		screenArea.setText("Error retrieving screen content: " + e.getMessage());
+        	}
             
             // Update cursor position
-            BufferPosition cursor = terminal.getBuffer().getCursorBufferPosition();
-            cursorLabel.setText(String.format("Cursor: %d,%d (pos %d)", 
-                cursor.getRow(), cursor.getCol(), cursor.getPosition()));
+            BufferPosition cursor = terminal.buffer().getCursorBufferPosition();
+            cursorLabel.setText(String.format("Cursor: %d,%d (pos %d)",  cursor.getRow(), cursor.getCol(), cursor.getPosition()));
         });
     }
     
