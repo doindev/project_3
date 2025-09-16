@@ -2,6 +2,7 @@ package org.me.ibm;
 
 import java.io.IOException;
 import java.net.Socket;
+import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLSocket;
@@ -10,7 +11,7 @@ import javax.net.ssl.SSLSocketFactory;
 public class Tn3270 implements AutoCloseable {
     private Socket socket;
     private int timeout = 10000; // 10 seconds
-    private TelnetOptions telnetOptions;
+    private TelnetOptionsNegotiator telnetOptions;
     private Buffer buffer;
     private Screen screen;
     private DataStreamParser parser;
@@ -33,68 +34,79 @@ public class Tn3270 implements AutoCloseable {
     }
     
     public void connect(String hostname, int port) throws IOException {
-        if (connected) {
+    	if (connected) {
             throw new IllegalStateException("Already connected. Call disconnect() first.");
         }
         
         try {
-          try {
-          	SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-              SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
+        	try {
+        		SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+        		SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
 //              sslSocket.setSoTimeout(timeout);
               
-              // Connect to the remote host
-              sslSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
+        		// Connect to the remote host
+        		sslSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
               
-              // Start TLS handshake
-              sslSocket.startHandshake();
+        		// Start TLS handshake
+        		sslSocket.startHandshake();
               
-              socket = sslSocket;
-          } catch (SSLHandshakeException e) {
-          	try {
-          		Socket plainSocket = new Socket();
+        		socket = sslSocket;
+        	} catch (SSLHandshakeException e) {
+        		try {
+        			Socket plainSocket = new Socket();
 //          		plainSocket.setSoTimeout(timeout);
-          		plainSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
-          		socket = plainSocket;
-          	} catch (IOException ex) {
-  				throw e;
-  			}
-          } catch (IOException e) {
-              throw e;
-          }
+        			plainSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
+        			socket = plainSocket;
+        		} catch (IOException ex) {
+        			throw e;
+        		}
+        	} catch (IOException e) {
+        		throw e;
+        	}
+        	
+        	Thread.sleep(100); // Give some time for the socket to stabilize
+          
+        	boolean gotLock = false;
+        	try {
+        		gotLock = buffer.acquireLock();
             
-            // Initialize telnet options negotiation
-            telnetOptions = new TelnetOptions(socket.getInputStream(), socket.getOutputStream());
-            telnetOptions.setBuffer(buffer);
+        		// Initialize telnet options negotiation
+        		telnetOptions = new TelnetOptionsNegotiator(socket.getInputStream(), socket.getOutputStream());
+        		telnetOptions.setBuffer(buffer);
             
-            // Initialize screen with output stream for sending commands
-            screen = new Screen(buffer, socket.getOutputStream());
+        		// Initialize screen with output stream for sending commands
+        		screen = new Screen(buffer, socket.getOutputStream());
             
-            // Negotiate telnet options and get first non-telnet byte
-            final int firstDataByte = telnetOptions.negotiateOptions();
+        		// Negotiate telnet options and get first non-telnet byte
+        		final int firstDataByte = telnetOptions.negotiateOptions();
             
-            // Initialize and start data stream parser
-            parser = new DataStreamParser(buffer, socket.getInputStream());
+        		// Initialize and start data stream parser
+        		parser = new DataStreamParser(buffer, socket.getInputStream());
             
-            parserThread = new Thread(() -> {
-                try {
-                    parser.parse(firstDataByte);
-                } catch (IOException e) {
-                    if (connected) {
-                        System.err.println("Data stream parser error: " + e.getMessage());
-                    }
-                    // Connection lost, mark as disconnected
-                    connected = false;
-                }
-            }, "TN3270-Parser");
+        		parserThread = new Thread(() -> {
+        			try {
+        				parser.parse(firstDataByte);
+        			} catch (IOException e) {
+        				if (connected) {
+        					System.err.println("Data stream parser error: " + e.getMessage());
+        				}
+        				// Connection lost, mark as disconnected
+        				connected = false;
+        			}
+        		}, "TN3270-Parser");
             
-            parserThread.setDaemon(true);
-            parserThread.start();
+        		parserThread.setDaemon(true);
+        		parserThread.start();
             
-            connected = true;
-            
-        } catch (IOException e) {
-            cleanup();
+        		connected = true;
+        	} finally{
+        		if(gotLock){
+        			buffer.awaitEor();
+        			buffer.unlock();
+        		}
+        	}
+        } catch (IOException | InterruptedException | TimeoutException e) {
+        	cleanup();
             throw new IOException("Failed to connect to " + hostname + ":" + port, e);
         }
     }
@@ -147,7 +159,7 @@ public class Tn3270 implements AutoCloseable {
         return screen;
     }
     
-    public Buffer getBuffer() {
+    public Buffer buffer() {
         return buffer;
     }
     
@@ -167,7 +179,7 @@ public class Tn3270 implements AutoCloseable {
                 socket.getLocalPort());
     }
     
-    public TelnetOptions getTelnetOptions() {
+    public TelnetOptionsNegotiator getTelnetOptions() {
         return telnetOptions;
     }
     
@@ -204,75 +216,6 @@ public class Tn3270 implements AutoCloseable {
         } finally {
             removeScreenUpdateListener(listener);
         }
-    }
-    
-    // Convenience methods that delegate to screen
-    public void sendEnter() throws IOException {
-        screen().enter();
-    }
-    
-    public void sendPF(int pfNumber) throws IOException {
-        switch (pfNumber) {
-            case 1: screen().pf1(); break;
-            case 2: screen().pf2(); break;
-            case 3: screen().pf3(); break;
-            case 4: screen().pf4(); break;
-            case 5: screen().pf5(); break;
-            case 6: screen().pf6(); break;
-            case 7: screen().pf7(); break;
-            case 8: screen().pf8(); break;
-            case 9: screen().pf9(); break;
-            case 10: screen().pf10(); break;
-            case 11: screen().pf11(); break;
-            case 12: screen().pf12(); break;
-            default:
-                throw new IllegalArgumentException("Invalid PF key number: " + pfNumber);
-        }
-    }
-    
-    public void sendPA(int paNumber) throws IOException {
-        switch (paNumber) {
-            case 1: screen().pa1(); break;
-            case 2: screen().pa2(); break;
-            case 3: screen().pa3(); break;
-            default:
-                throw new IllegalArgumentException("Invalid PA key number: " + paNumber);
-        }
-    }
-    
-    public void sendClear() throws IOException {
-        screen().clear();
-    }
-    
-    public void type(String text) {
-        screen().putString(text);
-    }
-    
-    public void type(int row, int col, String text) {
-        BufferPosition pos = new BufferPosition(row, col);
-        if (pos.isValid()) {
-            screen().putString(pos.getPosition(), text);
-        }
-    }
-    
-    public String getScreenText() {
-        return screen().getString();
-    }
-    
-    public String getScreenText(String separator) {
-        return screen().getString(separator);
-    }
-    
-    public String getScreenText(int row) {
-        return screen().getString(row);
-    }
-    
-    public void tab() {
-        screen().tab();
-    }
-    
-    public void home() {
-        screen().home();
     }
     
     @Override
