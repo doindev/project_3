@@ -9,7 +9,7 @@ public class DataStreamParser {
     private final Buffer buffer;
     private final InputStream inputStream;
     private boolean running;
-    private boolean debug = true;
+    private boolean debug = false;
    
     public DataStreamParser(Buffer buffer, InputStream inputStream) {
         this.buffer = buffer;
@@ -27,7 +27,7 @@ public class DataStreamParser {
 
         // Process the first byte if provided
         if (firstByte != -1) {
-        	System.out.println(firstByte);
+//        	System.out.println(firstByte);
             bufferByte((byte) firstByte);
         }
         
@@ -35,7 +35,7 @@ public class DataStreamParser {
         while (running) {
             try {
                 int b = inputStream.read();
-                System.out.println(b);
+//                System.out.println(b);
                 if (b == -1) {
                     break; // End of stream
                 }
@@ -47,7 +47,20 @@ public class DataStreamParser {
     				}
                 } else if(((byte)b) == TelnetConstants.EOR) {
 					iacMode = false;
-					processDataStream(dataBuffer, dataBufferPos);
+					
+					boolean gotLock = false;
+					try {
+						gotLock = buffer.acquireLock();
+						processDataStream(dataBuffer, dataBufferPos); 
+					} catch (Exception e) {
+						throw new IOException("Error processing data stream at EOR", e);
+					} finally {
+						dataBufferPos = 0; // Reset data buffer position after processing
+						if(gotLock){
+							buffer.signalEor();
+							buffer.unlock();
+						}
+					}
 					continue; // Read next byte for command
 				}
                 
@@ -102,29 +115,32 @@ public class DataStreamParser {
        
         if((command & 0xFF) < 240) {
         	command = (byte)((command & 0xFF) + 240);
+        	data[index] = command;
         }
+        
+        buffer.setIncomingCommandByte(command);
         
         switch (command) {
             case TelnetConstants.WRITE:
             	if(debug) {
 					System.out.println((command & 0xFF) + " CMD_WRITE");
 				}
-                return processWrite(data, index + 1, length);
-                
+                int indx = processWrite(data, index + 1, length);
+                // only call restore if start printer was set, meaning the screen data stream is complete
+                if ((buffer.wcc() & TelnetConstants.WCC_START_PRINTER) != 0) {
+                	buffer.restoreDataFromBackground();
+                }
+                return indx;
             case TelnetConstants.ERASE_WRITE:
             	if(debug) {
 					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE");
 				}
-                buffer.clear();
                 return processWrite(data, index + 1, length);
-                
             case TelnetConstants.ERASE_WRITE_ALTERNATE:
             	if(debug) {
 					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE_ALTERNATE");
 				}
-                buffer.clear();
                 return processWrite(data, index + 1, length);
-                
             case TelnetConstants.READ_BUFFER:
             	if(debug) {
 					System.out.println((command & 0xFF) + " CMD_READ_BUFFER");
@@ -166,41 +182,52 @@ public class DataStreamParser {
             // Check for orders
             switch (b) {
                 case TelnetConstants.SF:
+                	buffer.incOrderCount();
                     index = processStartField(data, index, length);
                     break;
                     
                 case TelnetConstants.SFE:
+                	buffer.incOrderCount();
                     index = processStartFieldExtended(data, index, length);
                     break;
                     
                 case TelnetConstants.SBA:
+                	buffer.incOrderCount();
                     index = processSetBufferAddress(data, index, length);
                     break;
                     
                 case TelnetConstants.SA:
+                	buffer.incOrderCount();
                     index = processSetAttribute(data, index, length);
                     break;
                     
                 case TelnetConstants.MF:
+                	buffer.incOrderCount();
                     index = processModifyField(data, index, length);
                     break;
                     
                 case TelnetConstants.IC:
+                	buffer.incOrderCount();
                     index = processInsertCursor(data, index, length);
                     break;
                     
                 case TelnetConstants.PT:
+                	buffer.incOrderCount();
                     index = processProgramTab(data, index, length);
                     break;
                     
                 case TelnetConstants.RA:
+                	buffer.incOrderCount();
                     index = processRepeatToAddress(data, index, length);
                     break;
-                    
+                case TelnetConstants.EUA:
+                	buffer.incOrderCount();
+                    index = processEraseUntilAddress(data, index, length);
+                    break;
                 case TelnetConstants.GE:
+                	buffer.incOrderCount();
                     index = processGraphicsEscape(data, index, length);
                     break;
-                    
                 default:
                     index = processCharacter(data, index, length);
                     break;
@@ -219,37 +246,51 @@ public class DataStreamParser {
 
         byte wcc = data[index];
         
-        // Process Write Control Character bits
-        if ((wcc & TelnetConstants.WCC_RESET) != 0) {
-            // Reset operation
-        	wccFlags.add("RESET_MDT");
-			buffer.clear();
+        buffer.setIncomingWriteControlCharacterByte(wcc);
+        
+        if ((wcc & TelnetConstants.WCC_ERASE_ALL_UNPROTECTED) != 0) {
+			wccFlags.add("RESET_MDT");
+			wccFlags.add("ERASE_ALL_UNPROTECTED");
         }
         
         if ((wcc & TelnetConstants.WCC_PRINT) != 0) {
-            // Print operation
         	wccFlags.add("PRINT");
         }
         
         if ((wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
-            // Start printer
         	wccFlags.add("START_PRINTER");
         }
         
         if ((wcc & TelnetConstants.WCC_SOUND_ALARM) != 0) {
-            // Sound alarm
         	wccFlags.add("SOUND_ALARM");
         }
         
         if ((wcc & TelnetConstants.WCC_KEYBOARD_RESTORE) != 0) {
-            // Restore keyboard
         	wccFlags.add("KEYBOARD_RESTORE");
         }
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " wcc [" + String.join(", ", wccFlags) + "]");
-		}
+        switch(data[index -1]) {
+    	case TelnetConstants.ERASE_WRITE:
+		case TelnetConstants.ERASE_WRITE_ALTERNATE:
+			// no need to check or call reset mdt or erase all unprotected here, its implied by .clear()
+			buffer.clear();
+			break;
+		case TelnetConstants.WRITE:
+			if ((wcc & TelnetConstants.WCC_ERASE_ALL_UNPROTECTED) != 0) {
+				buffer.resetMdtFlags();
+				buffer.eraseAllUnprotected();
+			}
+			
+			// only call copy to background if start printer is set, meaning the screen data stream is complete
+			if ((wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
+				buffer.copyDataToBackground();
+			}
+    	}
         
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " WCC [" + String.join(", ", wccFlags) + "]");
+		}
+
         return index + 1;
     }
     
@@ -272,10 +313,10 @@ public class DataStreamParser {
         
         buffer.setFieldStart(currentPos, true);
         buffer.setAttribute(currentPos, attribute);
-        buffer.setCharacter(currentPos, ' '); // Field attribute position is typically blank
+        buffer.setEbcdicCharacter(currentPos, (byte)0x40); // Field attribute position is typically blank
         
-        // Move cursor to next position
-        buffer.setCursorPosition((currentPos + 1) % buffer.getBufferSize());
+        currentPos++;
+        buffer.setCursorPosition(Math.min((currentPos<buffer.getBufferSize()?currentPos:0), buffer.getBufferSize() - 1));
         
         return index + 2;
     }
@@ -315,9 +356,11 @@ public class DataStreamParser {
             // Handle other extended attributes as needed
         }
         
-        buffer.setCharacter(currentPos, ' ');
-        buffer.setCursorPosition((currentPos + 1) % buffer.getBufferSize());
+        buffer.setEbcdicCharacter(currentPos, (byte)0x40);
         
+        currentPos++;
+        buffer.setCursorPosition(Math.min((currentPos<buffer.getBufferSize()?currentPos:0), buffer.getBufferSize() - 1));
+
         return pos;
     }
     
@@ -431,17 +474,49 @@ public class DataStreamParser {
         int address = decodeAddress(data[index + 1], data[index + 2]);
         byte character = data[index + 3];
         
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " '" + Tn3270Conversions.ebcdicToAscii(character) + "' to " + address);
+		}
+        
         int currentPos = buffer.getCursorPosition();
         
         // Repeat character from current position to specified address
         while (currentPos != address && currentPos < buffer.getBufferSize()) {
-            buffer.setCharacter(currentPos, (char) character);
+            buffer.setEbcdicCharacter(currentPos, character);
             currentPos = (currentPos + 1) % buffer.getBufferSize();
         }
         
         buffer.setCursorPosition(currentPos);
         
         return index + 4;
+    }
+    
+    public int processEraseUntilAddress(byte[] data, int index, int length) {
+        if (index + 2 >= length) {
+			return index + 1;
+		}
+        
+        /*
+         * insert null in every field starting at the current address up to a ending position,
+         * only if the position is not protected, do not move the cursor
+         */
+        
+        if(debug) {
+			System.out.println((data[index] & 0xFF) + " ORDER_EUA");
+		}
+        
+        int address = decodeAddress(data[index + 1], data[index + 2]);
+        int currentPos = buffer.getCursorPosition();
+        
+        while (currentPos != address && currentPos < buffer.getBufferSize()) {
+        	// Only erase if position is not protected
+			if (!buffer.isProtected(currentPos)) {
+				buffer.setEbcdicCharacter(currentPos, (byte) 0x00); // EBCDIC null
+			}
+			currentPos++;
+        }
+        
+        return index + 3;
     }
     
     public int processGraphicsEscape(byte[] data, int index, int length) {
@@ -458,8 +533,10 @@ public class DataStreamParser {
         byte character = data[index + 1];
         int currentPos = buffer.getCursorPosition();
         
-        buffer.setCharacter(currentPos, (char) character);
-        buffer.setCursorPosition((currentPos + 1) % buffer.getBufferSize());
+        buffer.setEbcdicCharacter(currentPos, character);
+
+        currentPos++;
+        buffer.setCursorPosition(Math.min((currentPos<buffer.getBufferSize()?currentPos:0), buffer.getBufferSize() - 1));
         
         return index + 2;
     }
@@ -484,21 +561,17 @@ public class DataStreamParser {
 		}
         
         if(debug) {
-			System.out.println((data[index] & 0xFF) + " CHAR");
+			System.out.println((data[index] & 0xFF) + " '" + Tn3270Conversions.ebcdicToAscii(data[index]) + "'");
 		}
         
         byte b = data[index];
-        char character = (char) (b & 0xFF);
         
         int currentPos = buffer.getCursorPosition();
         
-        // Only place character if position is not protected
-        if (!buffer.isProtected(currentPos)) {
-            buffer.setCharacter(currentPos, character);
-        }
+        buffer.setEbcdicCharacter(currentPos, b);
         
-        // Move cursor to next position
-        buffer.setCursorPosition((currentPos + 1) % buffer.getBufferSize());
+        currentPos++;
+        buffer.setCursorPosition(Math.min((currentPos<buffer.getBufferSize()?currentPos:0), buffer.getBufferSize() - 1));
         
         return index + 1;
     }
