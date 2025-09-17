@@ -64,7 +64,7 @@ public class Tn3270 implements AutoCloseable {
         		throw e;
         	}
         	
-        	Thread.sleep(100); // Give some time for the socket to stabilize
+        	// Thread.sleep(100); // Give some time for the socket to stabilize
           
         	boolean gotLock = false;
         	try {
