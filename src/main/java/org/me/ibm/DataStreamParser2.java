@@ -454,7 +454,7 @@ public class DataStreamParser2 implements IDataStreamParser{
         
         // Program Tab - move to next unprotected field
         int currentPos = buffer.getCursorPosition();
-        int nextField = buffer.findNextUnprotectedField(currentPos);
+        int nextField = buffer.findNextUnprotectedField(currentPos) + 1;
         buffer.setCursorPosition(nextField);
     }
     
