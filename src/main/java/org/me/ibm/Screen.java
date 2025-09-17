@@ -376,7 +376,7 @@ public class Screen {
 			    	ord_sba = true;
 
 					if(debug) {
-			    		System.out.println("--> " + (TelnetConstants.SBA) + " SBA");
+			    		System.out.println("--> " + (sba[0] & 0xFF) + " SBA");
 			        	System.out.println("--> " + (sba[1] & 0xFF) + " high");
 			        	System.out.println("--> " + (sba[2] & 0xFF) + " low");
 			        }
