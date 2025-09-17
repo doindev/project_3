@@ -14,7 +14,7 @@ public class Tn3270 implements AutoCloseable {
     private TelnetOptionsNegotiator telnetOptions;
     private Buffer buffer;
     private Screen screen;
-    private DataStreamParser parser;
+    private IDataStreamParser parser;
     private Thread parserThread;
     private boolean connected;
     
