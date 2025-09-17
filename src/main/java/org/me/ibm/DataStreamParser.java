@@ -5,11 +5,11 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
-public class DataStreamParser {
+public class DataStreamParser implements IDataStreamParser{
     private final Buffer buffer;
     private final InputStream inputStream;
     private boolean running;
-    private boolean debug = false;
+//    private boolean debug = false;
    
     public DataStreamParser(Buffer buffer, InputStream inputStream) {
         this.buffer = buffer;
@@ -21,13 +21,13 @@ public class DataStreamParser {
         parse(-1); // No first byte provided
     }
     
-    public void parse(int firstByte) throws IOException {
+    @Override
+	public void parse(int firstByte) throws IOException {
         running = true;
         boolean iacMode = false;
 
         // Process the first byte if provided
         if (firstByte != -1) {
-//        	System.out.println(firstByte);
             bufferByte((byte) firstByte);
         }
         
@@ -35,7 +35,7 @@ public class DataStreamParser {
         while (running) {
             try {
                 int b = inputStream.read();
-//                System.out.println(b);
+
                 if (b == -1) {
                     break; // End of stream
                 }
@@ -91,7 +91,8 @@ public class DataStreamParser {
     }
     
     
-    public void stop() {
+    @Override
+	public void stop() {
         running = false;
     }
     
@@ -122,39 +123,39 @@ public class DataStreamParser {
         
         switch (command) {
             case TelnetConstants.WRITE:
-            	if(debug) {
-					System.out.println((command & 0xFF) + " CMD_WRITE");
-				}
+//            	if(debug) {
+//					System.out.println((command & 0xFF) + " CMD_WRITE");
+//				}
                 int indx = processWrite(data, index + 1, length);
                 // only call restore if start printer was set, meaning the screen data stream is complete
-                if ((buffer.wcc() & TelnetConstants.WCC_START_PRINTER) != 0) {
+                if (buffer.wcc() != null && (buffer.wcc() & TelnetConstants.WCC_START_PRINTER) != 0) {
                 	buffer.restoreDataFromBackground();
                 }
                 return indx;
             case TelnetConstants.ERASE_WRITE:
-            	if(debug) {
-					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE");
-				}
+//            	if(debug) {
+//					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE");
+//				}
                 return processWrite(data, index + 1, length);
             case TelnetConstants.ERASE_WRITE_ALTERNATE:
-            	if(debug) {
-					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE_ALTERNATE");
-				}
+//            	if(debug) {
+//					System.out.println((command & 0xFF) + " CMD_ERASE_WRITE_ALTERNATE");
+//				}
                 return processWrite(data, index + 1, length);
             case TelnetConstants.READ_BUFFER:
-            	if(debug) {
-					System.out.println((command & 0xFF) + " CMD_READ_BUFFER");
-				}
+//            	if(debug) {
+//					System.out.println((command & 0xFF) + " CMD_READ_BUFFER");
+//				}
             	return index + 1;
             case TelnetConstants.READ_MODIFIED:
-            	if(debug) {
-					System.out.println((command & 0xFF) + " CMD_READ_MODIFIED");
-				}
+//            	if(debug) {
+//					System.out.println((command & 0xFF) + " CMD_READ_MODIFIED");
+//				}
             	return index + 1;
             case TelnetConstants.READ_MODIFIED_ALL:
-            	if(debug) {
-					System.out.println((command & 0xFF) + " CMD_READ_MODIFIED_ALL");
-				}
+//            	if(debug) {
+//					System.out.println((command & 0xFF) + " CMD_READ_MODIFIED_ALL");
+//				}
                 return index + 1;
             default:
                 // Treat as data character
@@ -246,8 +247,6 @@ public class DataStreamParser {
 
         byte wcc = data[index];
         
-        buffer.setIncomingWriteControlCharacterByte(wcc);
-        
         if ((wcc & TelnetConstants.WCC_ERASE_ALL_UNPROTECTED) != 0) {
 			wccFlags.add("RESET_MDT");
 			wccFlags.add("ERASE_ALL_UNPROTECTED");
@@ -269,6 +268,9 @@ public class DataStreamParser {
         	wccFlags.add("KEYBOARD_RESTORE");
         }
         
+        buffer.setIncomingCommandByte(data[index -1]);
+        buffer.setIncomingWriteControlCharacterByte(wcc);
+        
         switch(data[index -1]) {
     	case TelnetConstants.ERASE_WRITE:
 		case TelnetConstants.ERASE_WRITE_ALTERNATE:
@@ -287,9 +289,9 @@ public class DataStreamParser {
 			}
     	}
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " WCC [" + String.join(", ", wccFlags) + "]");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " WCC [" + String.join(", ", wccFlags) + "]");
+//		}
 
         return index + 1;
     }
@@ -299,15 +301,15 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_SF");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_SF");
+//		}
          
         byte attribute = data[index + 1];
         
-        if(debug) {
-			System.out.println((attribute & 0xFF) + " attr");
-		}
+//        if(debug) {
+//			System.out.println((attribute & 0xFF) + " attr");
+//		}
         
         int currentPos = buffer.getCursorPosition();
         
@@ -326,16 +328,16 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_SFE");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_SFE");
+//		}
         
         int pos = index + 1;
         byte paramCount = data[pos++];
         
-        if(debug) {
-			System.out.println((paramCount & 0xFF) + " paramCount");
-		}
+//        if(debug) {
+//			System.out.println((paramCount & 0xFF) + " paramCount");
+//		}
         
         int currentPos = buffer.getCursorPosition();
         buffer.setFieldStart(currentPos, true);
@@ -345,10 +347,10 @@ public class DataStreamParser {
             byte attrType = data[pos++];
             byte attrValue = data[pos++];
             
-            if(debug) {
-    			System.out.println((attrType & 0xFF) + " attrType");
-    			System.out.println((attrValue & 0xFF) + " attrValue");
-    		}
+//            if(debug) {
+//    			System.out.println((attrType & 0xFF) + " attrType");
+//    			System.out.println((attrValue & 0xFF) + " attrValue");
+//    		}
             
             if (attrType == (byte) 0xC0) { // Basic attribute
                 buffer.setAttribute(currentPos, attrValue);
@@ -369,9 +371,9 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-        	System.out.println((data[index] & 0xFF) + " ORDER_SBA");
-        }
+//        if(debug) {
+//        	System.out.println((data[index] & 0xFF) + " ORDER_SBA");
+//        }
         
         int address = decodeAddress(data[index + 1], data[index + 2]);
         
@@ -387,11 +389,11 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-        	System.out.println((data[index] & 0xFF) + " ORDER_SA");
-        	System.out.println((data[index + 1] & 0xFF) + " attrType");
-        	System.out.println((data[index + 2] & 0xFF) + " attrValue");
-        }
+//        if(debug) {
+//        	System.out.println((data[index] & 0xFF) + " ORDER_SA");
+//        	System.out.println((data[index + 1] & 0xFF) + " attrType");
+//        	System.out.println((data[index + 2] & 0xFF) + " attrValue");
+//        }
         
         byte attrType = data[index + 1];
         byte attrValue = data[index + 2];
@@ -410,10 +412,10 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-        	System.out.println((data[index] & 0xFF) + " ORDER_MF");
-        	System.out.println((data[index + 1] & 0xFF) + " paramCount");
-        }
+//        if(debug) {
+//        	System.out.println((data[index] & 0xFF) + " ORDER_MF");
+//        	System.out.println((data[index + 1] & 0xFF) + " paramCount");
+//        }
         
         byte paramCount = data[index + 1];
         int pos = index + 2;
@@ -423,10 +425,10 @@ public class DataStreamParser {
             byte attrType = data[pos++];
             byte attrValue = data[pos++];
             
-            if(debug) {
-    			System.out.println((attrType & 0xFF) + " attrType");
-    			System.out.println((attrValue & 0xFF) + " attrValue");
-    		}
+//            if(debug) {
+//    			System.out.println((attrType & 0xFF) + " attrType");
+//    			System.out.println((attrValue & 0xFF) + " attrValue");
+//    		}
             
             // Modify field attributes at current position
             if (attrType == (byte) 0xC0) {
@@ -439,20 +441,18 @@ public class DataStreamParser {
     }
     
     public int processInsertCursor(byte[] data, int index, int length) {
-    	
-    	if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_IC");
-		}
+//    	if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_IC");
+//		}
     	
         // Insert Cursor order - just move to next position for now
         return index + 1;
     }
     
     public int processProgramTab(byte[] data, int index, int length) {
-    	
-    	if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_PT");
-		}
+//    	if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_PT");
+//		}
     	
         // Program Tab - move to next unprotected field
         int currentPos = buffer.getCursorPosition();
@@ -467,16 +467,16 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_RA");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_RA");
+//		}
         
         int address = decodeAddress(data[index + 1], data[index + 2]);
         byte character = data[index + 3];
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " '" + Tn3270Conversions.ebcdicToAscii(character) + "' to " + address);
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " '" + Tn3270Conversions.ebcdicToAscii(character) + "' to " + address);
+//		}
         
         int currentPos = buffer.getCursorPosition();
         
@@ -501,9 +501,9 @@ public class DataStreamParser {
          * only if the position is not protected, do not move the cursor
          */
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_EUA");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_EUA");
+//		}
         
         int address = decodeAddress(data[index + 1], data[index + 2]);
         int currentPos = buffer.getCursorPosition();
@@ -524,10 +524,10 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-        	System.out.println((data[index] & 0xFF) + " ORDER_GE");
-        	System.out.println((data[index + 1] & 0xFF) + " char");
-        }
+//        if(debug) {
+//        	System.out.println((data[index] & 0xFF) + " ORDER_GE");
+//        	System.out.println((data[index + 1] & 0xFF) + " char");
+//        }
         
         // Graphics Escape - treat next byte as character
         byte character = data[index + 1];
@@ -546,9 +546,9 @@ public class DataStreamParser {
 			return index + 1;
 		}
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " ORDER_STRUCT_FIELD");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " ORDER_STRUCT_FIELD");
+//		}
         
         // Skip structured field for now
         int fieldLength = ((data[index] & 0xFF) << 8) | (data[index + 1] & 0xFF);
@@ -560,9 +560,9 @@ public class DataStreamParser {
 			return index;
 		}
         
-        if(debug) {
-			System.out.println((data[index] & 0xFF) + " '" + Tn3270Conversions.ebcdicToAscii(data[index]) + "'");
-		}
+//        if(debug) {
+//			System.out.println((data[index] & 0xFF) + " '" + Tn3270Conversions.ebcdicToAscii(data[index]) + "'");
+//		}
         
         byte b = data[index];
         
@@ -582,11 +582,11 @@ public class DataStreamParser {
         int addr1 = (byte1 & 0x3F);
         int addr2 = (byte2 & 0x3F);
         
-        if(debug) {
-    		System.out.println((byte1 & 0xFF) + " high");
-    		System.out.println((byte2 & 0xFF) + " low");
-    		System.out.println(((addr1 << 6) | addr2) + " final pos");
-    	}
+//        if(debug) {
+//    		System.out.println((byte1 & 0xFF) + " high");
+//    		System.out.println((byte2 & 0xFF) + " low");
+//    		System.out.println(((addr1 << 6) | addr2) + " final pos");
+//    	}
         
         return (addr1 << 6) | addr2;
     }
