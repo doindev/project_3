@@ -10,7 +10,7 @@ import javax.net.ssl.SSLSocketFactory;
 
 public class Tn3270 implements AutoCloseable {
     private Socket socket;
-    private int timeout = 10000; // 10 seconds
+    private int connectTimeout = 10000; // 10 seconds
     private TelnetOptionsNegotiator telnetOptions;
     private Buffer buffer;
     private Screen screen;
@@ -45,7 +45,7 @@ public class Tn3270 implements AutoCloseable {
 //              sslSocket.setSoTimeout(timeout);
               
         		// Connect to the remote host
-        		sslSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
+        		sslSocket.connect(new java.net.InetSocketAddress(hostname, port), connectTimeout);
               
         		// Start TLS handshake
         		sslSocket.startHandshake();
@@ -55,7 +55,7 @@ public class Tn3270 implements AutoCloseable {
         		try {
         			Socket plainSocket = new Socket();
 //          		plainSocket.setSoTimeout(timeout);
-        			plainSocket.connect(new java.net.InetSocketAddress(hostname, port), timeout);
+        			plainSocket.connect(new java.net.InetSocketAddress(hostname, port), connectTimeout);
         			socket = plainSocket;
         		} catch (IOException ex) {
         			throw e;
