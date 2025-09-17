@@ -403,13 +403,13 @@ public class Buffer {
     	 
         for (int i = startPosition + 1; i < TelnetConstants.BUFFER_SIZE; i++) {
             if (fieldStarts[i]) {
-                return i + 1; // Return position after field start
+                return i;
             }
         }
         // Wrap around
         for (int i = 0; i <= startPosition; i++) {
             if (fieldStarts[i]) {
-                return i + 1;
+                return i;
             }
         }
         return startPosition;
@@ -422,13 +422,38 @@ public class Buffer {
     	 
         for (int i = startPosition + 1; i < TelnetConstants.BUFFER_SIZE; i++) {
             if (fieldStarts[i] && !isProtected(i + 1)) {
-                return i + 1; // Return position after field start
+                return i;
             }
         }
         // Wrap around
         for (int i = 0; i <= startPosition; i++) {
             if (fieldStarts[i] && !isProtected(i + 1)) {
-                return i + 1;
+                return i;
+            }
+        }
+        return startPosition;
+    }
+    
+    public int findPreviousUnprotectedField(int startPosition) {
+    	if(hasFields()==false) {
+    		return -1;
+    	}
+    	
+    	int currentFieldStart = findFieldStart(startPosition);
+    	if(currentFieldStart == -1) {
+    		return startPosition;
+    	}
+    	
+        for (int i = currentFieldStart - 1; i >= 0; i--) {
+            if (fieldStarts[i] && !isProtected(i + 1)) {
+                return i;
+            }
+        }
+        
+        // Wrap around
+        for (int i = TelnetConstants.BUFFER_SIZE -1; i > currentFieldStart; i--) {
+            if (fieldStarts[i] && !isProtected(i + 1)) {
+                return i;
             }
         }
         return startPosition;
