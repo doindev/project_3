@@ -2,8 +2,6 @@ package org.me.ibm;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
 
 public class DataStreamParser implements IDataStreamParser{
     private final Buffer buffer;
@@ -242,31 +240,31 @@ public class DataStreamParser implements IDataStreamParser{
         if (index >= length) {
 			return index;
 		}
-
-		byte wcc = data[index];
-		
-   //      List<String> wccFlags = new ArrayList<>();
-
-   //      if ((wcc & TelnetConstants.WCC_ERASE_ALL_UNPROTECTED) != 0) {
-			// wccFlags.add("RESET_MDT");
-			// wccFlags.add("ERASE_ALL_UNPROTECTED");
-   //      }
         
-   //      if ((wcc & TelnetConstants.WCC_PRINT) != 0) {
-   //      	wccFlags.add("PRINT");
-   //      }
-        
-   //      if ((wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
-   //      	wccFlags.add("START_PRINTER");
-   //      }
-        
-   //      if ((wcc & TelnetConstants.WCC_SOUND_ALARM) != 0) {
-   //      	wccFlags.add("SOUND_ALARM");
-   //      }
-        
-   //      if ((wcc & TelnetConstants.WCC_KEYBOARD_RESTORE) != 0) {
-   //      	wccFlags.add("KEYBOARD_RESTORE");
-   //      }
+        byte wcc = data[index];
+       
+//        List<String> wccFlags = new ArrayList<>();
+//
+//        if ((wcc & TelnetConstants.WCC_ERASE_ALL_UNPROTECTED) != 0) {
+//			wccFlags.add("RESET_MDT");
+//			wccFlags.add("ERASE_ALL_UNPROTECTED");
+//        }
+//        
+//        if ((wcc & TelnetConstants.WCC_PRINT) != 0) {
+//        	wccFlags.add("PRINT");
+//        }
+//        
+//        if ((wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
+//        	wccFlags.add("START_PRINTER");
+//        }
+//        
+//        if ((wcc & TelnetConstants.WCC_SOUND_ALARM) != 0) {
+//        	wccFlags.add("SOUND_ALARM");
+//        }
+//        
+//        if ((wcc & TelnetConstants.WCC_KEYBOARD_RESTORE) != 0) {
+//        	wccFlags.add("KEYBOARD_RESTORE");
+//        }
         
         buffer.setIncomingCommandByte(data[index -1]);
         buffer.setIncomingWriteControlCharacterByte(wcc);
@@ -456,7 +454,7 @@ public class DataStreamParser implements IDataStreamParser{
     	
         // Program Tab - move to next unprotected field
         int currentPos = buffer.getCursorPosition();
-        int nextField = buffer.findNextUnprotectedField(currentPos);
+        int nextField = buffer.findNextUnprotectedField(currentPos) + 1;
         buffer.setCursorPosition(nextField);
         
         return index + 1;
