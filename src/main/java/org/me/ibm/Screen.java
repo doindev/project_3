@@ -260,12 +260,19 @@ public class Screen {
     }
     
     public Screen tab() {
+    	return tab(false);
+    }
+    public Screen tab(boolean shift) {
     	if(buffer.hasFields() == false) {
     		return this;
     	}
     	
         int currentPos = buffer.getCursorPosition();
-        int nextField = buffer.findNextUnprotectedField(currentPos);
+        int nextField = (
+        		shift?
+    				buffer.findPreviousUnprotectedField(currentPos) + 1:
+					buffer.findNextUnprotectedField(currentPos) + 1
+        		);
         
         if(nextField >=0) {
         	buffer.setCursorPosition(nextField);
@@ -280,7 +287,10 @@ public class Screen {
     	}
     	
         for(int i=0;i<buffer.getBufferSize();i++){
-			if(buffer.isFieldStart(i)){
+			if(
+				buffer.isFieldStart(i) && 
+				!buffer.getAttribute(i).isProtected()
+			){
 				buffer.setCursorPosition(i+1);
 				break;
 			}
@@ -374,8 +384,8 @@ public class Screen {
 			    	sba[1] = Tn3270Conversions.getPositionAddress(pos)[0];
 			    	sba[2] = Tn3270Conversions.getPositionAddress(pos)[1];
 			    	ord_sba = true;
-
-					if(debug) {
+			    	
+			    	if(debug) {
 			    		System.out.println("--> " + (sba[0] & 0xFF) + " SBA");
 			        	System.out.println("--> " + (sba[1] & 0xFF) + " high");
 			        	System.out.println("--> " + (sba[2] & 0xFF) + " low");
