@@ -20,8 +20,8 @@ public class Buffer {
 	
 	private final char[] ascii;
     private final byte[] ebcdic;
-    private final char[] asciiWriteBuffer = new char[TelnetConstants.BUFFER_SIZE];
-    private final byte[] ebcdicWriteBuffer = new byte[TelnetConstants.BUFFER_SIZE];
+    private final char[] asciiWriteBuffer;
+    private final byte[] ebcdicWriteBuffer;
     private final boolean[] ebcdicModified;
     private final FieldAttribute[] attributes;
     private final boolean[] fieldStarts;
@@ -40,6 +40,8 @@ public class Buffer {
     public Buffer() {
     	this.ascii = new char[TelnetConstants.BUFFER_SIZE];
         this.ebcdic = new byte[TelnetConstants.BUFFER_SIZE];
+        this.asciiWriteBuffer = new char[TelnetConstants.BUFFER_SIZE];
+        this.ebcdicWriteBuffer = new byte[TelnetConstants.BUFFER_SIZE];
         this.ebcdicModified = new boolean[TelnetConstants.BUFFER_SIZE];
         this.attributes = new FieldAttribute[TelnetConstants.BUFFER_SIZE];
         this.fieldStarts = new boolean[TelnetConstants.BUFFER_SIZE];
@@ -61,11 +63,18 @@ public class Buffer {
         fieldCount = 0;
         ebcdicCount = 0;
         orderCount = 0;
-        cmd = null;
-        cmdKey = null;
+//        cmd = null;
+//        wcc = null;
+//        cmdKey = null;
         ack = 0;
         
         ebcdicCount = 0;
+    }
+    
+    public void clearPreCommandCounts() {
+    	orderCount = 0;
+		ebcdicCount = 0;
+		ack = 0;
     }
     
     public void copyDataToBackground() {
@@ -226,8 +235,8 @@ public class Buffer {
 	}
     
     public Buffer setAidKey(Integer cmdKey){
+    	clearPreCommandCounts();
     	this.cmdKey = cmdKey;
-    	ack=0;
     	return this;
     }
 
@@ -240,7 +249,7 @@ public class Buffer {
     	return fieldCount>0;
     }
     
-    public byte wcc() {
+    public Byte wcc() {
     	return wcc;
     }
     
@@ -251,21 +260,36 @@ public class Buffer {
 		eorCond.await(wait, unit);
 	}
 	public void signalEor(){
-//		if(debug){
-//			System.out.println(new Date().toString() + "   cmd->" + String.format("%1$-" + "3" + "s", String.valueOf(cmd)) + "\teor\t" + 
-//					"orders->" + orders + "\t" +
-//					"ebcdic->" + ebcdic + "\t" +
-//					"ack->" + ack + "\t" + 
-//					"cmdKey->" + cmdKey + "\t" + 
-//					(cmd==null || (orders>0 && ebcdic>1) || (orders==0 && ((cmd!=null && cmd==0) || cmdKey==108 || cmdKey==110)) || cmdKey==109 || (ack>1 || ignoreAckCount)?"ACT":"WAIT") + "\t" + //cmd==1 && !clearFlag?"WAIT":"ACT") + "\t" +
-//					string()
+		if(
+			cmdKey==null ||	// this only happens on the first data stream after telnet negotiation
+			(wcc != null && (wcc & TelnetConstants.WCC_START_PRINTER) != 0) || // indicates page is rendered
+			(ack>0 || ignoreAckCount) || // if ack is greater than 0, we have already signaled once, ignore AckCount was added specifically for ?
+			(orderCount>0 && ebcdicCount>1) || // generally means there is something to display
+			(orderCount==0 && 
+				(
+					cmdKey == TelnetConstants.AID_PA1 ||
+					cmdKey == TelnetConstants.AID_PA2 ||
+					cmdKey == TelnetConstants.AID_PA3 ||
+					cmdKey == TelnetConstants.AID_CLEAR
+				)
+			) ||
+			cmd == 0 // why ?
+		) {
+//			if (cmd != null && cmd == TelnetConstants.WRITE && wcc != null && (wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
+//				restoreDataFromBackground();
+//			}
+//			System.out.println("-".repeat(getWidth()) + "\n" + string("\n") + "-".repeat(getWidth()));
+//			System.out.println("signalEor: cmd=" + (cmd!=null?(cmd & 0xff):"null") + ", wcc=" + (wcc!=null?(wcc & 0xff):"null") + ", orders=" + orderCount + ", ebcdic=" + ebcdicCount + ", ack=" + ack + ", cmdKey=" + cmdKey + ", ignoreAckCount=" + ignoreAckCount + 
+//					(wcc!=null && (wcc & TelnetConstants.WCC_START_PRINTER)!=0?" START_PRINTER":"") 
 //				);
-//		}
-//		//				            								pa1				pa2				clear
-		if(cmd==null || (orderCount>0 && ebcdicCount>1) || (orderCount==0 && ((cmd!=null && cmd==0) || (cmdKey==108 || cmdKey==110)) || cmdKey==109 || (ack>1 || ignoreAckCount))){
+			
 			eorCond.signalAll();
 			return;
 		}
+		
+//		System.out.println("signalEor: cmd=" + (cmd!=null?(cmd & 0xff):"null") + ", wcc=" + (wcc!=null?(wcc & 0xff):"null") + ", orders=" + orderCount + ", ebcdic=" + ebcdicCount + ", ack=" + ack + ", cmdKey=" + cmdKey + ", ignoreAckCount=" + ignoreAckCount + 
+//				(wcc!=null && (wcc & TelnetConstants.WCC_START_PRINTER)!=0?" START_PRINTER":"") 
+//			);
 		
 		ack++;
 	}
@@ -475,7 +499,7 @@ public class Buffer {
 		StringBuffer sb = new StringBuffer("");
 		
 		if(separator!=null){
-			for(int row=0;row<TelnetConstants.SCREEN_WIDTH;row++){
+			for(int row=0;row<TelnetConstants.SCREEN_HEIGHT;row++){
 				sb.append( string( row ) );
 				sb.append(separator);
 			}
@@ -483,7 +507,7 @@ public class Buffer {
 			try{
 				sb.append( new String(ascii, 0, TelnetConstants.BUFFER_SIZE) );
 			}catch(Exception e){
-				for(int row=0;row<TelnetConstants.SCREEN_WIDTH;row++) {
+				for(int row=0;row<TelnetConstants.SCREEN_HEIGHT;row++) {
 					sb.append( string( row ) );
 				}
 			}
