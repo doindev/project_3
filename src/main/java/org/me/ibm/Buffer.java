@@ -84,7 +84,7 @@ public class Buffer {
 		if(hasFields()) {
 			for(int i=0;i<TelnetConstants.BUFFER_SIZE;i++) {
 				if(fieldStarts[i]) {
-					int endIndex = (i+1<TelnetConstants.BUFFER_SIZE?findNextField(i+1):TelnetConstants.BUFFER_SIZE);
+					int endIndex = (i+1<TelnetConstants.BUFFER_SIZE?findNextField(i+1):TelnetConstants.BUFFER_SIZE-1);
 					
 					if(endIndex!= -1) {
 						boolean isNull = true;
