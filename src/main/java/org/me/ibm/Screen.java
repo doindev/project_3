@@ -9,7 +9,6 @@ import java.util.function.Consumer;
 public class Screen {
 	private TimeUnit UNIT = TimeUnit.MILLISECONDS;
 	private long WAIT = 5000;
-	private static final long idleTime = 50; // milliseconds
 	private boolean debug = false;
 	
     private final Buffer buffer;
@@ -26,7 +25,7 @@ public class Screen {
     	action.accept(this);
 		return this;
 	}
-    
+   
     public String getString() {
     	try {
     		return getString("\n");
@@ -229,11 +228,6 @@ public class Screen {
         return this;
     }
     
-    public Screen enter(boolean logOnly) throws IOException, InterruptedException, TimeoutException {
-        sendCommandKey(TelnetConstants.AID_ENTER, logOnly);
-        return this;
-    }
-    
     public Screen clear() throws IOException, InterruptedException, TimeoutException {
         buffer.clear();
         sendCommandKey(TelnetConstants.AID_CLEAR);
@@ -305,10 +299,6 @@ public class Screen {
 	}
     
     private void sendCommandKey(byte aid) throws IOException, InterruptedException, TimeoutException {
-        sendCommandKey(aid, false);
-    }
-    
-    private void sendCommandKey(byte aid, boolean logOnly) throws IOException, InterruptedException, TimeoutException {
         if (outputStream == null) {
             return;
         }
@@ -321,16 +311,15 @@ public class Screen {
       	  	if(debug) {
 				System.out.println("--> " + (aid & 0xff) + " AID");
 			}
-	        if(!logOnly) {
-				outputStream.write(aid);
-			}
-	        buffer.setAidKey(aid & 0xFF);
-	        
+      	  	
+      	  	buffer.setAidKey(aid & 0xFF);
+
+			outputStream.write(aid);
+
 	        // Send cursor position (2 bytes)
 	        int cursorPos = buffer.getCursorPosition();
-	        if(!logOnly) {
-				outputStream.write(Tn3270Conversions.getPositionAddress(cursorPos));
-			}
+
+			outputStream.write(Tn3270Conversions.getPositionAddress(cursorPos));
 	        
 	        if(debug) {
 	        	System.out.println("--> " + (Tn3270Conversions.getPositionAddress(cursorPos)[0] & 0xFF) + " high");
@@ -344,37 +333,26 @@ public class Screen {
 	        	sendModifiedValues();
 	        }
 	        
-	        
 	        // Send IAC EOR to end transmission
 	        if(debug) {
 				System.out.println("--> " + (TelnetConstants.IAC & 0xFF) + " IAC");
 			}
-	        if(!logOnly) {
-				outputStream.write(TelnetConstants.IAC);
-			}
+
+			outputStream.write(TelnetConstants.IAC);
 	        
 	        if(debug) {
 				System.out.println("--> " + (TelnetConstants.EOR & 0xFF) + " EOR");
 			}
-	        if(!logOnly) {
-				outputStream.write(TelnetConstants.EOR);
-			}
-	        if(!logOnly) {
-				outputStream.flush();
-			}
+
+			outputStream.write(TelnetConstants.EOR);
+			outputStream.flush();
 	        
-	        if(!logOnly) {
-				buffer.awaitEor();
-			}
+
+			buffer.awaitEor();
         } finally{
         	if(gotLock){
         		buffer.unlock();
         	}
-        	try {
-        		Thread.sleep(idleTime);
-        	} catch(InterruptedException e) {
-				Thread.currentThread().interrupt();
-			}
         }
     }
     
