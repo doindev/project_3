@@ -374,6 +374,12 @@ public class Screen {
 			    	sba[1] = Tn3270Conversions.getPositionAddress(pos)[0];
 			    	sba[2] = Tn3270Conversions.getPositionAddress(pos)[1];
 			    	ord_sba = true;
+
+					if(debug) {
+			    		System.out.println("--> " + (TelnetConstants.SBA) + " SBA");
+			        	System.out.println("--> " + (sba[1] & 0xFF) + " high");
+			        	System.out.println("--> " + (sba[2] & 0xFF) + " low");
+			        }
 			    	
 					outputStream.write(sba);
 					
