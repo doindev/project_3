@@ -63,12 +63,7 @@ public class Buffer {
         fieldCount = 0;
         ebcdicCount = 0;
         orderCount = 0;
-//        cmd = null;
-//        wcc = null;
-//        cmdKey = null;
         ack = 0;
-        
-        ebcdicCount = 0;
     }
     
     public void clearPreCommandCounts() {
