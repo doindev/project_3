@@ -256,6 +256,7 @@ public class Buffer {
 	}
 	public void signalEor(){
 		if(
+			cmd == null ||
 			cmdKey==null ||	// this only happens on the first data stream after telnet negotiation
 			(wcc != null && (wcc & TelnetConstants.WCC_START_PRINTER) != 0) || // indicates page is rendered
 			(ack>0 || ignoreAckCount) || // if ack is greater than 0, we have already signaled once, ignore AckCount was added specifically for ?
@@ -267,8 +268,7 @@ public class Buffer {
 					cmdKey == TelnetConstants.AID_PA3 ||
 					cmdKey == TelnetConstants.AID_CLEAR
 				)
-			) ||
-			cmd == 0 // why ?
+			)
 		) {
 //			if (cmd != null && cmd == TelnetConstants.WRITE && wcc != null && (wcc & TelnetConstants.WCC_START_PRINTER) != 0) {
 //				restoreDataFromBackground();
