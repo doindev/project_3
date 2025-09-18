@@ -59,7 +59,6 @@ public class Tn3270 implements AutoCloseable {
 		            sslSocket.connect(sockaddr, connectTimeout);
 		            sslSocket.startHandshake();
 		            socket = sslSocket;
-		            secure = true;
 	        	} catch (SSLHandshakeException she) {
 	        		java.net.SocketAddress sockaddr = new java.net.InetSocketAddress(hostname, port);
 					Socket plainSocket = new Socket();
