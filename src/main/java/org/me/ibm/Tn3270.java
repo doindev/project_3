@@ -17,6 +17,7 @@ public class Tn3270 implements AutoCloseable {
     private IDataStreamParser parser;
     private Thread parserThread;
     private boolean connected;
+    private boolean secure = true;
     
     // Default connection parameters
     private static final String DEFAULT_HOST = "localhost";
@@ -29,6 +30,17 @@ public class Tn3270 implements AutoCloseable {
         this.parser = null; // Will be initialized after connection
     }
     
+    public boolean isSecure() {
+		return secure;
+	}
+    
+    public void setSecure(boolean secure) {
+    	if(connected) {
+			throw new IllegalStateException("Cannot change security mode while connected.");
+		}
+		this.secure = secure;
+    }
+    
     public void connect() throws IOException {
         connect(DEFAULT_HOST, DEFAULT_PORT);
     }
@@ -39,37 +51,33 @@ public class Tn3270 implements AutoCloseable {
         }
         
         try {
-        	try {
-        		SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-        		SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
-//              sslSocket.setSoTimeout(timeout);
-              
-        		// Connect to the remote host
-        		sslSocket.connect(new java.net.InetSocketAddress(hostname, port), connectTimeout);
-              
-        		// Start TLS handshake
-        		sslSocket.startHandshake();
-              
-        		socket = sslSocket;
-        	} catch (SSLHandshakeException e) {
-        		try {
-        			Socket plainSocket = new Socket();
-//          		plainSocket.setSoTimeout(timeout);
-        			plainSocket.connect(new java.net.InetSocketAddress(hostname, port), connectTimeout);
-        			socket = plainSocket;
-        		} catch (IOException ex) {
-        			throw e;
-        		}
-        	} catch (IOException e) {
-        		throw e;
+        	if(secure) {
+	        	try {
+	        		SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+		            java.net.SocketAddress sockaddr = new java.net.InetSocketAddress(hostname, port);
+		            SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket();
+		            sslSocket.connect(sockaddr, connectTimeout);
+		            sslSocket.startHandshake();
+		            socket = sslSocket;
+		            secure = true;
+	        	} catch (SSLHandshakeException she) {
+	        		java.net.SocketAddress sockaddr = new java.net.InetSocketAddress(hostname, port);
+					Socket plainSocket = new Socket();
+					plainSocket.connect(sockaddr, connectTimeout);
+					socket = plainSocket;
+					secure = false;
+	        	}
+        	} else {
+        		java.net.SocketAddress sockaddr = new java.net.InetSocketAddress(hostname, port);
+				Socket plainSocket = new Socket();
+				plainSocket.connect(sockaddr, connectTimeout);
+				socket = plainSocket;
         	}
-        	
-        	// Thread.sleep(100); // Give some time for the socket to stabilize
           
         	boolean gotLock = false;
         	try {
         		gotLock = buffer.acquireLock();
-            
+
         		// Initialize telnet options negotiation
         		telnetOptions = new TelnetOptionsNegotiator(socket.getInputStream(), socket.getOutputStream());
         		telnetOptions.setBuffer(buffer);
